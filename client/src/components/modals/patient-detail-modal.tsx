@@ -35,17 +35,17 @@ import StatusBadge from "@/components/ui/status-badge";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { 
-  Save, 
-  Edit2, 
-  Trash2, 
-  StickyNote, 
-  User, 
-  Mail, 
-  Phone, 
+import {
+  Save,
+  Edit2,
+  Trash2,
+  StickyNote,
+  User,
+  Mail,
+  Phone,
   Calendar,
   FileText,
-  Scale
+  Scale,
 } from "lucide-react";
 
 const noteSchema = z.object({
@@ -85,10 +85,30 @@ export default function PatientDetailModal({
   });
 
   // Fetch users for assignment dropdown
-  const { data: usersData } = useQuery<Array<{ id: string; firstName: string; lastName: string; email: string; role: string; isActive: boolean }> | { users: Array<{ id: string; firstName: string; lastName: string; email: string; role: string; isActive: boolean }>; pagination: any }>({
-    queryKey: ['/api/users'],
+  const { data: usersData } = useQuery<
+    | Array<{
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string;
+        role: string;
+        isActive: boolean;
+      }>
+    | {
+        users: Array<{
+          id: string;
+          firstName: string;
+          lastName: string;
+          email: string;
+          role: string;
+          isActive: boolean;
+        }>;
+        pagination: any;
+      }
+  >({
+    queryKey: ["/api/users"],
     queryFn: async () => {
-      const response = await fetch('/api/users?page=1&limit=100', {
+      const response = await fetch("/api/users?page=1&limit=100", {
         credentials: "include",
       });
       if (!response.ok) {
@@ -105,12 +125,14 @@ export default function PatientDetailModal({
       return [];
     },
     retry: false,
-    enabled: open && user?.role === 'admin',
+    enabled: open && user?.role === "admin",
   });
 
   // Extract users array from response (handle both formats)
-  const users = Array.isArray(usersData) ? usersData : (usersData?.users || []);
-  const assignableUsers = users?.filter(u => u.isActive && (u.role === 'attorney' || u.role === 'staff'));
+  const users = Array.isArray(usersData) ? usersData : usersData?.users || [];
+  const assignableUsers = users?.filter(
+    (u) => u.isActive && (u.role === "attorney" || u.role === "staff")
+  );
 
   // Fetch patient notes
   const { data: notes = [], isLoading: notesLoading } = useQuery({
@@ -124,10 +146,16 @@ export default function PatientDetailModal({
   // Create note mutation
   const createNoteMutation = useMutation({
     mutationFn: async (data: NoteFormData) => {
-      return await apiRequest("POST", `/api/patients/${patient.id}/notes`, data);
+      return await apiRequest(
+        "POST",
+        `/api/patients/${patient.id}/notes`,
+        data
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patients", patient.id, "notes"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patient.id, "notes"],
+      });
       form.reset();
       toast({
         title: "Success",
@@ -153,11 +181,23 @@ export default function PatientDetailModal({
 
   // Update note mutation
   const updateNoteMutation = useMutation({
-    mutationFn: async ({ noteId, data }: { noteId: string; data: Partial<NoteFormData> }) => {
-      return await apiRequest("PUT", `/api/patients/${patient.id}/notes/${noteId}`, data);
+    mutationFn: async ({
+      noteId,
+      data,
+    }: {
+      noteId: string;
+      data: Partial<NoteFormData>;
+    }) => {
+      return await apiRequest(
+        "PUT",
+        `/api/patients/${patient.id}/notes/${noteId}`,
+        data
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patients", patient.id, "notes"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patient.id, "notes"],
+      });
       setEditingNoteId(null);
       form.reset();
       toast({
@@ -185,10 +225,15 @@ export default function PatientDetailModal({
   // Delete note mutation (admin only)
   const deleteNoteMutation = useMutation({
     mutationFn: async (noteId: string) => {
-      return await apiRequest("DELETE", `/api/patients/${patient.id}/notes/${noteId}`);
+      return await apiRequest(
+        "DELETE",
+        `/api/patients/${patient.id}/notes/${noteId}`
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/patients", patient.id, "notes"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patient.id, "notes"],
+      });
       toast({
         title: "Success",
         description: "Note deleted successfully",
@@ -214,7 +259,11 @@ export default function PatientDetailModal({
   // Update patient assignment mutation (admin only)
   const updateAssignmentMutation = useMutation({
     mutationFn: async (assignedAttorney: string) => {
-      return await apiRequest("PATCH", `/api/patients/${patient.id}/assignment`, { assignedAttorney });
+      return await apiRequest(
+        "PATCH",
+        `/api/patients/${patient.id}/assignment`,
+        { assignedAttorney }
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
@@ -248,7 +297,9 @@ export default function PatientDetailModal({
   // Update envelope ID mutation (admin only)
   const updateEnvelopeIdMutation = useMutation({
     mutationFn: async (docusignEnvelopeId: string) => {
-      return await apiRequest("PATCH", `/api/patients/${patient.id}`, { docusignEnvelopeId: docusignEnvelopeId || null });
+      return await apiRequest("PATCH", `/api/patients/${patient.id}`, {
+        docusignEnvelopeId: docusignEnvelopeId || null,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
@@ -304,11 +355,16 @@ export default function PatientDetailModal({
 
   const getNoteTypeColor = (type: string) => {
     switch (type) {
-      case "appointment": return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
-      case "treatment": return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
-      case "legal": return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200";
-      case "insurance": return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-      default: return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
+      case "appointment":
+        return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
+      case "treatment":
+        return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+      case "legal":
+        return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200";
+      case "insurance":
+        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+      default:
+        return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
     }
   };
 
@@ -316,7 +372,10 @@ export default function PatientDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-4xl max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0 flex flex-col" data-testid="modal-patient-detail">
+      <DialogContent
+        className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-4xl max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0 flex flex-col"
+        data-testid="modal-patient-detail"
+      >
         <DialogHeader>
           <DialogTitle data-testid="text-patient-detail-title">
             <div className="flex items-center gap-3">
@@ -331,8 +390,8 @@ export default function PatientDetailModal({
         <div className="flex gap-4 border-b border-border">
           <button
             className={`px-4 py-2 font-medium transition-colors ${
-              activeTab === "overview" 
-                ? "text-primary border-b-2 border-primary" 
+              activeTab === "overview"
+                ? "text-primary border-b-2 border-primary"
                 : "text-muted-foreground hover:text-foreground"
             }`}
             onClick={() => setActiveTab("overview")}
@@ -342,8 +401,8 @@ export default function PatientDetailModal({
           </button>
           <button
             className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
-              activeTab === "notes" 
-                ? "text-primary border-b-2 border-primary" 
+              activeTab === "notes"
+                ? "text-primary border-b-2 border-primary"
                 : "text-muted-foreground hover:text-foreground"
             }`}
             onClick={() => setActiveTab("notes")}
@@ -369,29 +428,49 @@ export default function PatientDetailModal({
                   <CardContent className="space-y-4">
                     <div className="flex items-center gap-3">
                       <Mail className="w-4 h-4 text-muted-foreground" />
-                      <span data-testid="text-patient-email">{patient.email}</span>
+                      <span data-testid="text-patient-email">
+                        {patient.email}
+                      </span>
                     </div>
                     {patient.phone && (
                       <div className="flex items-center gap-3">
                         <Phone className="w-4 h-4 text-muted-foreground" />
-                        <span data-testid="text-patient-phone">{patient.phone}</span>
+                        <span data-testid="text-patient-phone">
+                          {patient.phone}
+                        </span>
                       </div>
                     )}
                     {patient.dateOfBirth && (
                       <div className="flex items-center gap-3">
                         <Calendar className="w-4 h-4 text-muted-foreground" />
-                        <span>DOB: {patient.dateOfBirth ? new Date(patient.dateOfBirth.toString()).toLocaleDateString() : 'Not provided'}</span>
+                        <span>
+                          DOB:{" "}
+                          {patient.dateOfBirth
+                            ? new Date(
+                                patient.dateOfBirth.toString()
+                              ).toLocaleDateString()
+                            : "Not provided"}
+                        </span>
                       </div>
                     )}
                     {patient.dateOfInjury && (
                       <div className="flex items-center gap-3">
                         <Calendar className="w-4 h-4 text-muted-foreground" />
-                        <span>Date of Injury: {patient.dateOfInjury ? new Date(patient.dateOfInjury.toString()).toLocaleDateString() : 'Not provided'}</span>
+                        <span>
+                          Date of Injury:{" "}
+                          {patient.dateOfInjury
+                            ? new Date(
+                                patient.dateOfInjury.toString()
+                              ).toLocaleDateString()
+                            : "Not provided"}
+                        </span>
                       </div>
                     )}
                     <div className="flex items-center gap-3">
                       <FileText className="w-4 h-4 text-muted-foreground" />
-                      <span>Status: <StatusBadge status={patient.status} /></span>
+                      <span>
+                        Status: <StatusBadge status={patient.status} />
+                      </span>
                     </div>
                   </CardContent>
                 </Card>
@@ -405,45 +484,57 @@ export default function PatientDetailModal({
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
-                      <label className="text-sm font-medium text-muted-foreground">Created By</label>
+                      <label className="text-sm font-medium text-muted-foreground">
+                        Created By
+                      </label>
                       <p data-testid="text-created-by">
-                        {patient.createdBy?.firstName} {patient.createdBy?.lastName}
+                        {patient.createdBy?.firstName}{" "}
+                        {patient.createdBy?.lastName}
                       </p>
                     </div>
-                    
+
                     <div>
                       <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
                         Assigned To
-                        {user?.role === 'admin' && !isEditingAssignment && (
+                        {user?.role === "admin" && !isEditingAssignment && (
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => {
                               setIsEditingAssignment(true);
-                              setSelectedAssignment(patient.assignedAttorney?.id || 'none');
+                              setSelectedAssignment(
+                                patient.assignedAttorney?.id || "none"
+                              );
                             }}
-                            className="h-6 px-2"
+                            className="h-8 px-2"
                             data-testid="button-edit-assignment"
                           >
                             <Edit2 className="w-3 h-3" />
                           </Button>
                         )}
                       </label>
-                      
-                      {isEditingAssignment && user?.role === 'admin' ? (
+
+                      {isEditingAssignment && user?.role === "admin" ? (
                         <div className="flex items-center gap-2 mt-1">
-                          <Select 
-                            value={selectedAssignment} 
+                          <Select
+                            value={selectedAssignment}
                             onValueChange={setSelectedAssignment}
                           >
-                            <SelectTrigger className="h-8" data-testid="select-update-assignment">
+                            <SelectTrigger
+                              className="h-8"
+                              data-testid="select-update-assignment"
+                            >
                               <SelectValue placeholder="Select user" />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="none">Unassigned</SelectItem>
                               {assignableUsers.map((assignUser) => (
-                                <SelectItem key={assignUser.id} value={assignUser.id}>
-                                  {assignUser.firstName} {assignUser.lastName} ({assignUser.role})
+                                <SelectItem
+                                  key={assignUser.id}
+                                  value={assignUser.id}
+                                >
+                                  {assignUser.firstName} {assignUser.lastName} (
+                                  {assignUser.role})
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -469,25 +560,35 @@ export default function PatientDetailModal({
                         </div>
                       ) : (
                         <p data-testid="text-assigned-user">
-                          {patient.assignedAttorney 
+                          {patient.assignedAttorney
                             ? `${patient.assignedAttorney.firstName} ${patient.assignedAttorney.lastName} (${patient.assignedAttorney.role})`
-                            : 'Unassigned'}
+                            : "Unassigned"}
                         </p>
                       )}
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-muted-foreground">Created</label>
+                      <label className="text-sm font-medium text-muted-foreground">
+                        Created
+                      </label>
                       <p>{new Date(patient.createdAt).toLocaleString()}</p>
                     </div>
                     {patient.consentSignedAt && (
                       <div>
-                        <label className="text-sm font-medium text-muted-foreground">Consent Signed</label>
-                        <p>{patient.consentSignedAt ? new Date(patient.consentSignedAt.toString()).toLocaleString() : 'Not signed'}</p>
+                        <label className="text-sm font-medium text-muted-foreground">
+                          Consent Signed
+                        </label>
+                        <p>
+                          {patient.consentSignedAt
+                            ? new Date(
+                                patient.consentSignedAt.toString()
+                              ).toLocaleString()
+                            : "Not signed"}
+                        </p>
                       </div>
                     )}
-                    
+
                     {/* DocuSign Envelope ID - Admin Only */}
-                    {user?.role === 'admin' && (
+                    {user?.role === "admin" && (
                       <div>
                         <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
                           DocuSign Envelope ID
@@ -497,16 +598,16 @@ export default function PatientDetailModal({
                               size="sm"
                               onClick={() => {
                                 setIsEditingEnvelopeId(true);
-                                setEnvelopeId(patient.docusignEnvelopeId || '');
+                                setEnvelopeId(patient.docusignEnvelopeId || "");
                               }}
-                              className="h-6 px-2"
+                              className="h-8 px-2"
                               data-testid="button-edit-envelope-id"
                             >
                               <Edit2 className="w-3 h-3" />
                             </Button>
                           )}
                         </label>
-                        
+
                         {isEditingEnvelopeId ? (
                           <div className="flex flex-col gap-2 mt-1">
                             <input
@@ -540,8 +641,15 @@ export default function PatientDetailModal({
                             </div>
                           </div>
                         ) : (
-                          <p data-testid="text-envelope-id" className="text-xs font-mono break-all">
-                            {patient.docusignEnvelopeId || <span className="text-muted-foreground italic">Not set</span>}
+                          <p
+                            data-testid="text-envelope-id"
+                            className="text-xs font-mono break-all"
+                          >
+                            {patient.docusignEnvelopeId || (
+                              <span className="text-muted-foreground italic">
+                                Not set
+                              </span>
+                            )}
                           </p>
                         )}
                       </div>
@@ -557,7 +665,10 @@ export default function PatientDetailModal({
                     <CardTitle>Injury Description</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-sm whitespace-pre-wrap" data-testid="text-injury-description">
+                    <p
+                      className="text-sm whitespace-pre-wrap"
+                      data-testid="text-injury-description"
+                    >
                       {patient.injuryDescription}
                     </p>
                   </CardContent>
@@ -581,53 +692,68 @@ export default function PatientDetailModal({
                     {notesLoading ? (
                       <div className="text-center py-8">
                         <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                        <p className="text-muted-foreground">Loading notes...</p>
+                        <p className="text-muted-foreground">
+                          Loading notes...
+                        </p>
                       </div>
                     ) : typedNotes.length === 0 ? (
                       <div className="text-center py-8">
                         <StickyNote className="w-16 h-16 text-muted-foreground mb-4 mx-auto" />
-                        <p className="text-muted-foreground">No notes found for this patient</p>
-                        <p className="text-sm text-muted-foreground mt-2">Add the first note using the form on the right</p>
+                        <p className="text-muted-foreground">
+                          No notes found for this patient
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-2">
+                          Add the first note using the form on the right
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-4">
                         {typedNotes.map((note: PatientNote) => (
-                          <div 
-                            key={note.id} 
+                          <div
+                            key={note.id}
                             className="border border-border rounded-lg p-4 hover:bg-accent/50 transition-colors"
                             data-testid={`note-item-${note.id}`}
                           >
                             <div className="flex items-start justify-between mb-2">
                               <div className="flex items-center gap-2">
-                                <Badge 
-                                  className={`text-xs ${getNoteTypeColor(note.noteType || 'general')}`}
+                                <Badge
+                                  className={`text-xs ${getNoteTypeColor(
+                                    note.noteType || "general"
+                                  )}`}
                                   data-testid={`badge-note-type-${note.id}`}
                                 >
-                                  {note.noteType || 'general'}
+                                  {note.noteType || "general"}
                                 </Badge>
-                                <span className="text-xs text-muted-foreground" data-testid={`text-note-date-${note.id}`}>
-                                  {note.createdAt ? new Date(note.createdAt).toLocaleString() : 'Unknown date'}
+                                <span
+                                  className="text-xs text-muted-foreground"
+                                  data-testid={`text-note-date-${note.id}`}
+                                >
+                                  {note.createdAt
+                                    ? new Date(note.createdAt).toLocaleString()
+                                    : "Unknown date"}
                                 </span>
                               </div>
                               <div className="flex gap-1">
                                 {note.createdBy === user?.id && (
-                                  <Button 
-                                    variant="ghost" 
+                                  <Button
+                                    variant="ghost"
                                     size="sm"
                                     onClick={() => startEdit(note)}
-                                    className="h-6 w-6 p-0"
+                                    className="h-8 w-8 p-0"
                                     data-testid={`button-edit-note-${note.id}`}
                                   >
                                     <Edit2 className="w-3 h-3" />
                                   </Button>
                                 )}
-                                {user?.role === 'admin' && (
-                                  <Button 
-                                    variant="ghost" 
+                                {user?.role === "admin" && (
+                                  <Button
+                                    variant="ghost"
                                     size="sm"
-                                    onClick={() => deleteNoteMutation.mutate(note.id)}
+                                    onClick={() =>
+                                      deleteNoteMutation.mutate(note.id)
+                                    }
                                     disabled={deleteNoteMutation.isPending}
-                                    className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
+                                    className="h-8 w-8 p-0 text-red-600 hover:text-white"
                                     data-testid={`button-delete-note-${note.id}`}
                                   >
                                     <Trash2 className="w-3 h-3" />
@@ -635,14 +761,19 @@ export default function PatientDetailModal({
                                 )}
                               </div>
                             </div>
-                            <p className="text-sm text-foreground whitespace-pre-wrap" data-testid={`text-note-content-${note.id}`}>
+                            <p
+                              className="text-sm text-foreground whitespace-pre-wrap"
+                              data-testid={`text-note-content-${note.id}`}
+                            >
                               {note.content}
                             </p>
-                            {note.updatedAt && note.updatedAt !== note.createdAt && (
-                              <p className="text-xs text-muted-foreground mt-2">
-                                Last updated: {new Date(note.updatedAt).toLocaleString()}
-                              </p>
-                            )}
+                            {note.updatedAt &&
+                              note.updatedAt !== note.createdAt && (
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  Last updated:{" "}
+                                  {new Date(note.updatedAt).toLocaleString()}
+                                </p>
+                              )}
                           </div>
                         ))}
                       </div>
@@ -661,25 +792,39 @@ export default function PatientDetailModal({
                   </CardHeader>
                   <CardContent>
                     <Form {...form}>
-                      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                      <form
+                        onSubmit={form.handleSubmit(onSubmit)}
+                        className="space-y-4"
+                      >
                         <FormField
                           control={form.control}
                           name="noteType"
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Note Type</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
+                              <Select
+                                onValueChange={field.onChange}
+                                value={field.value}
+                              >
                                 <FormControl>
                                   <SelectTrigger data-testid="select-note-type">
                                     <SelectValue placeholder="Select note type" />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
-                                  <SelectItem value="general">General</SelectItem>
-                                  <SelectItem value="appointment">Appointment</SelectItem>
-                                  <SelectItem value="treatment">Treatment</SelectItem>
+                                  <SelectItem value="general">
+                                    General
+                                  </SelectItem>
+                                  <SelectItem value="appointment">
+                                    Appointment
+                                  </SelectItem>
+                                  <SelectItem value="treatment">
+                                    Treatment
+                                  </SelectItem>
                                   <SelectItem value="legal">Legal</SelectItem>
-                                  <SelectItem value="insurance">Insurance</SelectItem>
+                                  <SelectItem value="insurance">
+                                    Insurance
+                                  </SelectItem>
                                 </SelectContent>
                               </Select>
                               <FormMessage />
@@ -707,17 +852,20 @@ export default function PatientDetailModal({
                         />
 
                         <div className="flex gap-2">
-                          <Button 
-                            type="submit" 
-                            disabled={createNoteMutation.isPending || updateNoteMutation.isPending}
+                          <Button
+                            type="submit"
+                            disabled={
+                              createNoteMutation.isPending ||
+                              updateNoteMutation.isPending
+                            }
                             data-testid="button-save-note"
                           >
                             <Save className="w-4 h-4 mr-2" />
                             {editingNoteId ? "Update Note" : "Add Note"}
                           </Button>
                           {editingNoteId && (
-                            <Button 
-                              type="button" 
+                            <Button
+                              type="button"
                               variant="outline"
                               onClick={cancelEdit}
                               data-testid="button-cancel-edit"

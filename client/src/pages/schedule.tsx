@@ -9,11 +9,15 @@ import { Button } from "@/components/ui/button";
 import { CalendarIcon, CalendarPlus, EditIcon } from "lucide-react";
 import ScheduleConsultationModal from "@/components/modals/schedule-consultation-modal";
 import { XIcon } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
 
 export default function Schedule() {
   const { toast } = useToast();
   const { isAuthenticated, isLoading } = useAuth();
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [editingAppointment, setEditingAppointment] = useState<any | null>(
+    null
+  );
 
   // Automatic redirect to login removed - App.tsx routing handles authentication redirects
 
@@ -24,6 +28,33 @@ export default function Schedule() {
     enabled: isAuthenticated, // SECURITY: Only fetch when authenticated
     retry: false,
   });
+
+  // Fetch patient data when editing an appointment
+  const { data: editingPatient } = useQuery({
+    queryKey: ["/api/patients", editingAppointment?.patientId],
+    queryFn: async () => {
+      if (!editingAppointment?.patientId) return null;
+      const response = await apiRequest(
+        "GET",
+        `/api/patients/${editingAppointment.patientId}`
+      );
+      const data = await response.json();
+      // Handle paginated response
+      return data.patients ? data.patients[0] : data;
+    },
+    enabled: !!editingAppointment?.patientId && isAuthenticated,
+    retry: false,
+  });
+
+  const handleEditAppointment = (appointment: any) => {
+    setEditingAppointment(appointment);
+    setIsScheduleModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsScheduleModalOpen(false);
+    setEditingAppointment(null);
+  };
 
   if (isLoading || !isAuthenticated) {
     return (
@@ -56,7 +87,10 @@ export default function Schedule() {
             </div>
             <Button
               data-testid="button-schedule-appointment"
-              onClick={() => setIsScheduleModalOpen(true)}
+              onClick={() => {
+                setEditingAppointment(null);
+                setIsScheduleModalOpen(true);
+              }}
             >
               <CalendarPlus className="w-4 h-4 mr-2" />
               Schedule Appointment
@@ -118,7 +152,12 @@ export default function Schedule() {
                       </div>
 
                       <div className="flex space-x-2">
-                        <Button variant="ghost" size="sm" title="Edit">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Edit"
+                          onClick={() => handleEditAppointment(appointment)}
+                        >
                           <EditIcon className="w-4 h-4" />
                         </Button>
                         <Button variant="ghost" size="sm" title="Cancel">
@@ -136,8 +175,40 @@ export default function Schedule() {
 
       <ScheduleConsultationModal
         open={isScheduleModalOpen}
-        onOpenChange={setIsScheduleModalOpen}
-        showPatients={true}
+        onOpenChange={handleCloseModal}
+        showPatients={!editingAppointment}
+        patient={
+          editingPatient
+            ? (() => {
+                const scheduledDate = editingAppointment?.scheduledAt
+                  ? new Date(editingAppointment.scheduledAt)
+                  : null;
+
+                // Format time as HH:MM
+                const formatTime = (date: Date) => {
+                  const hours = date.getHours().toString().padStart(2, "0");
+                  const minutes = date.getMinutes().toString().padStart(2, "0");
+                  return `${hours}:${minutes}`;
+                };
+
+                return {
+                  id: editingPatient.id,
+                  firstName: editingPatient.firstName,
+                  lastName: editingPatient.lastName,
+                  status: editingPatient.status,
+                  consultationDate: scheduledDate
+                    ? scheduledDate.toISOString().split("T")[0]
+                    : editingPatient.consultationDate,
+                  consultationTime: scheduledDate
+                    ? formatTime(scheduledDate)
+                    : editingPatient.consultationTime,
+                  consultationLocation:
+                    editingAppointment?.notes ||
+                    editingPatient.consultationLocation,
+                };
+              })()
+            : undefined
+        }
       />
     </div>
   );

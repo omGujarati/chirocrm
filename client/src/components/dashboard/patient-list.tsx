@@ -178,7 +178,7 @@ export default function PatientList() {
             ))}
           </div>
         ) : displayPatients.length === 0 ? (
-          <div className="text-center py-8">
+          <div className="flex flex-col items-center justify-center text-center py-8">
             <UsersIcon className="w-10 h-10 text-muted-foreground mb-4" />
             <p className="text-muted-foreground">No patients found</p>
           </div>

@@ -113,7 +113,7 @@ export default function ConsentForms() {
                     <p className="text-sm text-muted-foreground">Loading...</p>
                   </div>
                 ) : pendingConsent.length === 0 ? (
-                  <div className="text-center py-8">
+                  <div className="flex flex-col items-center justify-center text-center py-8">
                     <CheckCircleIcon className="w-10 h-10 text-green-500 mb-4" />
                     <p className="text-muted-foreground">
                       All consent forms are up to date!
@@ -168,7 +168,7 @@ export default function ConsentForms() {
                     <p className="text-sm text-muted-foreground">Loading...</p>
                   </div>
                 ) : signedConsent.length === 0 ? (
-                  <div className="text-center py-8">
+                  <div className="flex flex-col items-center justify-center text-center py-8">
                     <FileSignatureIcon className="w-10 h-10 text-muted-foreground mb-4" />
                     <p className="text-muted-foreground">
                       No signed consent forms yet

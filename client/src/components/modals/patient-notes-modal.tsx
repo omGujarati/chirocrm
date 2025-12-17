@@ -233,7 +233,7 @@ export default function PatientNotesModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-4xl max-h-[95vh] sm:max-h-[90vh] md:max-h-[85vh] rounded-lg overflow-auto flex flex-col p-4 sm:p-6"
+        className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-4xl max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0 flex flex-col"
         data-testid="modal-patient-notes"
       >
         <DialogHeader>
@@ -244,7 +244,7 @@ export default function PatientNotesModal({
 
         <div className="flex flex-col md:flex-row gap-6">
           {/* Notes List */}
-          <div className="">
+          <div className="flex-1 overflow-y-auto">
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">

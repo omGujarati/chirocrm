@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -49,11 +49,20 @@ interface ScheduleConsultationModalProps {
 }
 
 const baseFormSchema = z.object({
-  consultationDate: z.coerce.date().refine((date) => date > new Date(), {
-    message: "Consultation date must be in the future"
-  }),
+  consultationDate: z.coerce.date().refine(
+    (date) => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const selectedDate = new Date(date);
+      selectedDate.setHours(0, 0, 0, 0);
+      return selectedDate >= today;
+    },
+    {
+      message: "Consultation date must be today or in the future",
+    }
+  ),
   consultationTime: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, {
-    message: "Time must be in HH:MM format"
+    message: "Time must be in HH:MM format",
   }),
   consultationLocation: z.string().min(1, "Location is required"),
   patientId: z.string().optional(),
@@ -61,17 +70,20 @@ const baseFormSchema = z.object({
 
 type FormData = z.infer<typeof baseFormSchema>;
 
-export default function ScheduleConsultationModal({ 
-  open, 
-  onOpenChange, 
+export default function ScheduleConsultationModal({
+  open,
+  onOpenChange,
   patient,
-  showPatients = false
+  showPatients = false,
 }: ScheduleConsultationModalProps) {
   const [isOpen, setIsOpen] = useState(open || false);
-  const [selectedPatientId, setSelectedPatientId] = useState<string>(patient?.id || "");
+  const [selectedPatientId, setSelectedPatientId] = useState<string>(
+    patient?.id || ""
+  );
   const { toast } = useToast();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const lastProcessedPatientId = useRef<string | null>(null);
 
   // Fetch patients when showPatients is true
   const { data: patientsData } = useQuery({
@@ -82,7 +94,7 @@ export default function ScheduleConsultationModal({
         const url = `/api/patients?page=1&limit=100`;
         const response = await apiRequest("GET", url);
         const data = await response.json();
-        
+
         // Handle backward compatibility: if response is an array (old format), convert it
         if (Array.isArray(data)) {
           return {
@@ -95,11 +107,13 @@ export default function ScheduleConsultationModal({
             },
           };
         }
-        
+
         // New format - ensure it has the expected structure
         if (!data.patients || !data.pagination) {
           console.error("Invalid response format:", data);
-          throw new Error("Invalid response format from server. Expected { patients: [], pagination: {} }");
+          throw new Error(
+            "Invalid response format from server. Expected { patients: [], pagination: {} }"
+          );
         }
         return data;
       } catch (error: any) {
@@ -112,7 +126,7 @@ export default function ScheduleConsultationModal({
   });
 
   const patients = patientsData?.patients || [];
-  const selectedPatient = showPatients 
+  const selectedPatient = showPatients
     ? patients.find((p: any) => p.id === selectedPatientId) || patient
     : patient;
 
@@ -120,65 +134,90 @@ export default function ScheduleConsultationModal({
     if (open !== undefined) {
       setIsOpen(open);
     }
+    // Reset the ref when modal opens/closes
+    if (!open) {
+      lastProcessedPatientId.current = null;
+    }
   }, [open]);
 
   const form = useForm<FormData>({
     resolver: zodResolver(baseFormSchema),
     defaultValues: {
       patientId: patient?.id || "",
-      consultationDate: patient?.consultationDate ? new Date(patient.consultationDate) : undefined,
+      consultationDate: patient?.consultationDate
+        ? new Date(patient.consultationDate)
+        : undefined,
       consultationTime: patient?.consultationTime || "",
       consultationLocation: patient?.consultationLocation || "",
     },
   });
 
-  // Reset form when patient changes
+  // Reset form when patient prop changes (not when selectedPatientId changes to avoid loop)
   useEffect(() => {
-    const currentPatient = showPatients && selectedPatientId 
-      ? patients.find((p: any) => p.id === selectedPatientId) 
-      : patient;
-    
-    if (currentPatient) {
+    if (!showPatients && patient) {
       form.reset({
-        patientId: currentPatient.id,
-        consultationDate: currentPatient.consultationDate ? new Date(currentPatient.consultationDate) : undefined,
-        consultationTime: currentPatient.consultationTime || "",
-        consultationLocation: currentPatient.consultationLocation || "",
+        patientId: patient.id,
+        consultationDate: patient.consultationDate
+          ? new Date(patient.consultationDate)
+          : undefined,
+        consultationTime: patient.consultationTime || "",
+        consultationLocation: patient.consultationLocation || "",
       });
-      setSelectedPatientId(currentPatient.id);
-    } else if (showPatients) {
+      setSelectedPatientId(patient.id);
+    }
+  }, [patient?.id, showPatients]);
+
+  // Update form when selectedPatientId changes (only in showPatients mode)
+  useEffect(() => {
+    // Prevent infinite loop by checking if we've already processed this patient ID
+    if (lastProcessedPatientId.current === selectedPatientId) {
+      return;
+    }
+
+    if (showPatients && selectedPatientId) {
+      const selectedPat = patients.find((p: any) => p.id === selectedPatientId);
+      if (selectedPat) {
+        lastProcessedPatientId.current = selectedPatientId;
+        form.reset({
+          patientId: selectedPat.id,
+          consultationDate: selectedPat.consultationDate
+            ? new Date(selectedPat.consultationDate)
+            : undefined,
+          consultationTime: selectedPat.consultationTime || "",
+          consultationLocation: selectedPat.consultationLocation || "",
+        });
+      }
+    } else if (showPatients && !selectedPatientId) {
+      lastProcessedPatientId.current = "";
       form.reset({
         patientId: "",
         consultationDate: undefined,
         consultationTime: "",
         consultationLocation: "",
       });
-      setSelectedPatientId("");
     }
-  }, [patient, selectedPatientId, showPatients, patients, form]);
-
-  // Update selectedPatientId when form patientId changes
-  const watchedPatientId = form.watch("patientId");
-  useEffect(() => {
-    if (showPatients && watchedPatientId) {
-      setSelectedPatientId(watchedPatientId);
-    }
-  }, [watchedPatientId, showPatients]);
+  }, [selectedPatientId, showPatients, patients]);
 
   const scheduleConsultationMutation = useMutation({
     mutationFn: async (data: FormData) => {
-      const patientIdToUse = showPatients ? (data.patientId || "") : (patient?.id || "");
+      const patientIdToUse = showPatients
+        ? data.patientId || ""
+        : patient?.id || "";
       if (!patientIdToUse) throw new Error("No patient selected");
-      
+
       if (showPatients && !data.patientId) {
         throw new Error("Please select a patient");
       }
-      
-      const response = await apiRequest("PUT", `/api/patients/${patientIdToUse}/schedule`, {
-        consultationDate: data.consultationDate.toISOString(),
-        consultationTime: data.consultationTime,
-        consultationLocation: data.consultationLocation,
-      });
+
+      const response = await apiRequest(
+        "PUT",
+        `/api/patients/${patientIdToUse}/schedule`,
+        {
+          consultationDate: data.consultationDate.toISOString(),
+          consultationTime: data.consultationTime,
+          consultationLocation: data.consultationLocation,
+        }
+      );
       return response.json();
     },
     onSuccess: (data) => {
@@ -202,7 +241,7 @@ export default function ScheduleConsultationModal({
         });
         return;
       }
-      
+
       toast({
         title: "Error",
         description: error.message || "Failed to schedule consultation",
@@ -215,7 +254,7 @@ export default function ScheduleConsultationModal({
     if (showPatients && !data.patientId) {
       form.setError("patientId", {
         type: "manual",
-        message: "Please select a patient"
+        message: "Please select a patient",
       });
       return;
     }
@@ -232,15 +271,15 @@ export default function ScheduleConsultationModal({
   // Check if user can schedule based on role and patient status
   const canSchedule = (pat: typeof selectedPatient) => {
     if (!user || !pat) return false;
-    
+
     // Admin can always schedule
-    if (user.role === 'admin') return true;
-    
+    if (user.role === "admin") return true;
+
     // Staff can only schedule when patient status is 'consent_signed' or 'schedulable'
-    if (user.role === 'staff' || user.role === 'attorney') {
-      return pat.status === 'consent_signed' || pat.status === 'schedulable';
+    if (user.role === "staff" || user.role === "attorney") {
+      return pat.status === "consent_signed" || pat.status === "schedulable";
     }
-    
+
     return false;
   };
 
@@ -253,15 +292,25 @@ export default function ScheduleConsultationModal({
     return null;
   }
 
-  const isUpdateMode = selectedPatient ? !!(selectedPatient.consultationDate && selectedPatient.consultationTime && selectedPatient.consultationLocation) : false;
+  const isUpdateMode = selectedPatient
+    ? !!(
+        selectedPatient.consultationDate &&
+        selectedPatient.consultationTime &&
+        selectedPatient.consultationLocation
+      )
+    : false;
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-md max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0 flex flex-col" data-testid="modal-schedule-consultation">
+      <DialogContent
+        className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-md max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0 flex flex-col"
+        data-testid="modal-schedule-consultation"
+      >
         <DialogHeader>
           <DialogTitle data-testid="title-schedule-consultation">
-            {isUpdateMode ? 'Update' : 'Schedule'} Consultation
-            {selectedPatient && ` for ${selectedPatient.firstName} ${selectedPatient.lastName}`}
+            {isUpdateMode ? "Update" : "Schedule"} Consultation
+            {selectedPatient &&
+              ` for ${selectedPatient.firstName} ${selectedPatient.lastName}`}
           </DialogTitle>
         </DialogHeader>
 
@@ -279,16 +328,6 @@ export default function ScheduleConsultationModal({
                         onValueChange={(value) => {
                           field.onChange(value);
                           setSelectedPatientId(value);
-                          const selectedPat = patients.find((p: any) => p.id === value);
-                          if (selectedPat) {
-                            form.reset({
-                              ...form.getValues(),
-                              patientId: value,
-                              consultationDate: selectedPat.consultationDate ? new Date(selectedPat.consultationDate) : undefined,
-                              consultationTime: selectedPat.consultationTime || "",
-                              consultationLocation: selectedPat.consultationLocation || "",
-                            });
-                          }
                         }}
                         value={field.value}
                       >
@@ -299,9 +338,10 @@ export default function ScheduleConsultationModal({
                         </FormControl>
                         <SelectContent>
                           {patients
-                            .filter((p: any) => 
-                              p.status === 'consent_signed' || 
-                              p.status === 'schedulable'
+                            .filter(
+                              (p: any) =>
+                                p.status === "consent_signed" ||
+                                p.status === "schedulable"
                             )
                             .map((p: any) => (
                               <SelectItem key={p.id} value={p.id}>
@@ -318,24 +358,44 @@ export default function ScheduleConsultationModal({
               <FormField
                 control={form.control}
                 name="consultationDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Consultation Date *</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="date" 
-                        {...field} 
-                        value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
-                        onChange={(e) => {
-                          const date = e.target.value ? new Date(e.target.value) : undefined;
-                          field.onChange(date);
-                        }}
-                        data-testid="input-consultation-date"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  const today = new Date().toISOString().split("T")[0];
+                  const fieldValue = field.value
+                    ? field.value instanceof Date
+                      ? field.value.toISOString().split("T")[0]
+                      : new Date(field.value).toISOString().split("T")[0]
+                    : "";
+
+                  return (
+                    <FormItem>
+                      <FormLabel>Consultation Date *</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="date"
+                          min={today}
+                          value={fieldValue}
+                          onChange={(e) => {
+                            const dateValue = e.target.value;
+                            if (dateValue) {
+                              // Create date at midnight in local timezone to avoid timezone issues
+                              const [year, month, day] = dateValue
+                                .split("-")
+                                .map(Number);
+                              const date = new Date(year, month - 1, day);
+                              field.onChange(date);
+                            } else {
+                              field.onChange(undefined);
+                            }
+                          }}
+                          onBlur={field.onBlur}
+                          name={field.name}
+                          data-testid="input-consultation-date"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
 
               <FormField
@@ -345,8 +405,8 @@ export default function ScheduleConsultationModal({
                   <FormItem>
                     <FormLabel>Consultation Time *</FormLabel>
                     <FormControl>
-                      <Input 
-                        type="time" 
+                      <Input
+                        type="time"
                         {...field}
                         placeholder="14:30"
                         data-testid="input-consultation-time"
@@ -364,7 +424,7 @@ export default function ScheduleConsultationModal({
                   <FormItem>
                     <FormLabel>Consultation Location *</FormLabel>
                     <FormControl>
-                      <Textarea 
+                      <Textarea
                         placeholder="Enter consultation location (office address, room number, or virtual meeting link)"
                         {...field}
                         rows={3}
@@ -378,20 +438,24 @@ export default function ScheduleConsultationModal({
             </div>
 
             <div className="flex justify-end space-x-2">
-              <Button 
-                type="button" 
-                variant="outline" 
+              <Button
+                type="button"
+                variant="outline"
                 onClick={handleClose}
                 data-testid="button-cancel-schedule"
               >
                 Cancel
               </Button>
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 disabled={scheduleConsultationMutation.isPending}
                 data-testid="button-save-schedule"
               >
-                {scheduleConsultationMutation.isPending ? "Scheduling..." : (isUpdateMode ? "Update" : "Schedule")}
+                {scheduleConsultationMutation.isPending
+                  ? "Scheduling..."
+                  : isUpdateMode
+                  ? "Update"
+                  : "Schedule"}
               </Button>
             </div>
           </form>

@@ -1207,7 +1207,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Helper function to check if user can access a patient
   const canAccessPatient = (user: any, patient: any): boolean => {
     if (user.role === "admin") return true;
-    if (user.role === "staff" && patient.createdBy.id === user.id) return true;
+    if (
+      user.role === "staff" &&
+      (patient.createdBy.id === user.id ||
+        patient.assignedAttorney?.id === user.id)
+    )
+      return true;
     if (user.role === "attorney" && patient.assignedAttorney?.id === user.id)
       return true;
     return false;
@@ -1512,6 +1517,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         "consent_sent",
         "consent_signed",
         "schedulable",
+        "treatment_completed",
+        "pending_records",
+        "records_forwarded",
+        "dropped",
       ];
 
       if (!validStatuses.includes(status)) {
@@ -1529,14 +1538,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const oldStatus = patient.status;
 
-      // Update patient status
-      const updatedPatient = await storage.updatePatient(patientId, {
+      // Prepare update data
+      const updateData: any = {
         status: status as any,
-        // Set consentSignedAt if manually marking as signed
-        ...(status === "consent_signed" && !patient.consentSignedAt
-          ? { consentSignedAt: new Date() }
-          : {}),
-      });
+      };
+
+      // Set consentSignedAt if manually marking as signed
+      if (status === "consent_signed" && !patient.consentSignedAt) {
+        updateData.consentSignedAt = new Date();
+      }
+
+      // Set dropped fields if manually marking as dropped
+      if (status === "dropped" && oldStatus !== "dropped") {
+        updateData.droppedBy = userId;
+        updateData.droppedAt = new Date();
+        // If no drop reason provided, use a default
+        if (!patient.dropReason) {
+          updateData.dropReason = "Dropped via admin status override";
+        }
+      }
+
+      // Update patient status
+      const updatedPatient = await storage.updatePatient(patientId, updateData);
 
       await auditLog(req, "patient_status_override", "patient", patientId, {
         adminUserId: userId,
@@ -1764,6 +1787,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update patient with consultation details
       const patient = await storage.updatePatient(patientId, consultationData);
 
+      // Create appointment in appointments table
+      // Combine consultationDate and consultationTime into scheduledAt timestamp
+      const consultationDate = new Date(consultationData.consultationDate);
+      const [hours, minutes] = consultationData.consultationTime
+        .split(":")
+        .map(Number);
+      consultationDate.setHours(hours, minutes, 0, 0);
+
+      // Determine provider: use assignedAttorney if available, otherwise use current user
+      const providerId = existingPatient.assignedAttorney?.id || userId;
+
+      // Check if there's an existing appointment for this patient's consultation
+      // (to handle updates/rescheduling - typically a patient has one consultation)
+      const existingAppointments = await storage.getAppointmentsByPatient(
+        patientId
+      );
+      const existingConsultationAppointment = existingAppointments.find(
+        (apt) =>
+          apt.status === "scheduled" &&
+          // Match appointments on the same date (consultation rescheduling)
+          new Date(apt.scheduledAt).toDateString() ===
+            consultationDate.toDateString()
+      );
+
+      let appointment;
+      if (existingConsultationAppointment) {
+        // Update existing appointment
+        appointment = await storage.updateAppointment(
+          existingConsultationAppointment.id,
+          {
+            scheduledAt: consultationDate,
+            providerId: providerId,
+            notes: consultationData.consultationLocation,
+            duration: 60, // Default 60 minutes
+          }
+        );
+      } else {
+        // Create new appointment
+        appointment = await storage.createAppointment({
+          patientId: patientId,
+          providerId: providerId,
+          scheduledAt: consultationDate,
+          duration: 60, // Default 60 minutes
+          status: "scheduled",
+          notes: consultationData.consultationLocation,
+          createdBy: userId,
+        });
+      }
+
       // HIPAA-safe audit log
       await auditLog(req, "consultation_scheduled", "patient", patient.id, {
         role: user.role,
@@ -1771,6 +1843,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasTime: !!consultationData.consultationTime,
         hasLocation: !!consultationData.consultationLocation,
         scheduledBy: userId,
+        appointmentId: appointment.id,
       });
 
       res.json({
@@ -1780,6 +1853,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           consultationDate: patient.consultationDate,
           consultationTime: patient.consultationTime,
           consultationLocation: patient.consultationLocation,
+        },
+        appointment: {
+          id: appointment.id,
+          scheduledAt: appointment.scheduledAt,
         },
       });
     } catch (error) {
@@ -3022,34 +3099,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const authenticatedUser = req.user as AuthenticatedUser;
       const currentUserId = authenticatedUser.id;
       const currentUser = await storage.getUser(currentUserId);
-      const { userId, patientId } = req.query;
-      let tasks;
+
+      if (!currentUser) {
+        return res.status(403).json({ message: "User not found" });
+      }
+
+      const { userId, patientId, page, limit } = req.query;
+
+      // Parse pagination parameters with defaults
+      const pageNum = parseInt(page as string) || 1;
+      const limitNum = parseInt(limit as string) || 5;
+
+      // Validate pagination parameters - minimum limit is 5
+      const validLimit = Math.max(
+        5,
+        [5, 10, 50, 100].includes(limitNum) ? limitNum : 5
+      );
+      const validPage = pageNum > 0 ? pageNum : 1;
 
       // HIPAA compliance: only admins can query arbitrary user's tasks
+      let filterUserId: string | undefined;
+      let filterPatientId: string | undefined;
+
       if (userId && typeof userId === "string") {
-        if (currentUser?.role !== "admin" && userId !== currentUserId) {
+        if (currentUser.role !== "admin" && userId !== currentUserId) {
           return res
             .status(403)
             .json({ message: "Access denied - can only view own tasks" });
         }
-        tasks = await storage.getTasksByUser(userId);
+        filterUserId = userId;
       } else if (patientId && typeof patientId === "string") {
         // Only admins can query tasks by patient ID
-        if (currentUser?.role !== "admin") {
+        if (currentUser.role !== "admin") {
           return res
             .status(403)
             .json({ message: "Access denied - insufficient permissions" });
         }
-        tasks = await storage.getTasksByPatient(patientId);
+        filterPatientId = patientId;
       } else {
         // Non-admins only see their own tasks, admins see all
-        tasks =
-          currentUser?.role === "admin"
-            ? await storage.getTasks()
-            : await storage.getTasksByUser(currentUserId);
+        if (currentUser.role !== "admin") {
+          filterUserId = currentUserId;
+        }
       }
 
-      res.json(tasks);
+      // Use paginated method
+      const result = await storage.getTasksPaginated(
+        validPage,
+        validLimit,
+        filterUserId,
+        filterPatientId,
+        currentUser.role
+      );
+
+      // Return response in the format expected by frontend
+      res.json({
+        tasks: result.tasks,
+        pagination: {
+          page: validPage,
+          limit: validLimit,
+          total: result.total,
+          totalPages: result.totalPages,
+        },
+      });
     } catch (error) {
       console.error("Error fetching tasks:", error);
       res.status(500).json({ message: "Failed to fetch tasks" });

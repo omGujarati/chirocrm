@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import crypto from "crypto";
 import { XMLParser } from "fast-xml-parser";
 import { storage } from "./storage";
+import { notificationService } from "./services/emailService";
 
 export async function docusignWebhookHandler(req: Request, res: Response) {
   try {
@@ -86,7 +87,6 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
       envelopeId = env.EnvelopeID;
       status = env.Status?.toLowerCase();
       completedTime = env.Completed || null;
-
     } else {
       console.log("📄 Webhook Format: JSON");
 
@@ -99,6 +99,14 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
       if (status === "recipient-completed" || status === "recipient-signed") {
         status = "completed";
       }
+
+      // Normalize declined/voided events
+      if (status === "recipient-declined" || status === "envelope-declined") {
+        status = "declined";
+      }
+      if (status === "recipient-voided" || status === "envelope-voided") {
+        status = "voided";
+      }
     }
 
     console.log("📬 Parsed Envelope ID:", envelopeId);
@@ -108,7 +116,9 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
     // 4️⃣ FIND PATIENT RECORD
     // -------------------------------------------------------
     const patients = await storage.getPatients();
-    const patient = patients.find((p: any) => p.docusignEnvelopeId === envelopeId);
+    const patient = patients.find(
+      (p: any) => p.docusignEnvelopeId === envelopeId
+    );
 
     if (!patient) {
       console.warn(`⚠️ No patient found for envelope ${envelopeId}`);
@@ -121,7 +131,9 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
     // This ensures we have a valid user ID for the audit log foreign key constraint
     const userId = patient.createdBy?.id;
     if (!userId) {
-      console.error("❌ Patient missing createdBy user - cannot create audit log");
+      console.error(
+        "❌ Patient missing createdBy user - cannot create audit log"
+      );
       return res.status(500).json({ message: "Patient data incomplete" });
     }
 
@@ -178,6 +190,19 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
             reason: status,
           },
         });
+
+        // Send notification to admin when patient declines
+        await notificationService.createInAppNotification({
+          type: "consent_declined",
+          patientId: patient.id,
+          message: `Patient ${patient.firstName} ${patient.lastName} has ${
+            status === "declined" ? "declined" : "voided"
+          } the consent form. Status reset to pending consent.`,
+          isUrgent: true,
+          targetRole: "admin",
+        });
+
+        console.log(`📢 Admin notification sent for ${status} consent`);
         break;
 
       default:
@@ -198,7 +223,6 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
       envelopeId,
       status,
     });
-
   } catch (error) {
     console.error("❌ Webhook Error:", error);
     return res.status(200).json({ message: "Error processed" });

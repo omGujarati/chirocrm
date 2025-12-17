@@ -34,65 +34,97 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUsers(): Promise<User[]>;
-  getUsersPaginated(page: number, limit: number): Promise<{ users: User[]; total: number; totalPages: number }>;
+  getUsersPaginated(
+    page: number,
+    limit: number
+  ): Promise<{ users: User[]; total: number; totalPages: number }>;
   upsertUser(user: UpsertUser): Promise<User>;
   updateUser(id: string, updates: Partial<UpsertUser>): Promise<User>;
   updateUserStatus(id: string, isActive: boolean): Promise<User>;
   deleteUser(id: string): Promise<void>;
-  
+
   // Patient operations
   getPatients(): Promise<PatientWithCreator[]>;
-  getPatientsPaginated(page: number, limit: number, status?: string, userId?: string, userRole?: string): Promise<{ patients: PatientWithCreator[]; total: number; totalPages: number }>;
+  getPatientsPaginated(
+    page: number,
+    limit: number,
+    status?: string,
+    userId?: string,
+    userRole?: string
+  ): Promise<{
+    patients: PatientWithCreator[];
+    total: number;
+    totalPages: number;
+  }>;
   getPatient(id: string): Promise<PatientWithCreator | undefined>;
   createPatient(patient: InsertPatient): Promise<Patient>;
   updatePatient(id: string, patient: Partial<InsertPatient>): Promise<Patient>;
   deletePatient(id: string): Promise<void>;
   getPatientsByStatus(status: string): Promise<PatientWithCreator[]>;
-  getPatientsByAssignedAttorney(attorneyId: string): Promise<PatientWithCreator[]>;
-  
+  getPatientsByAssignedAttorney(
+    attorneyId: string
+  ): Promise<PatientWithCreator[]>;
+
   // Task operations
   getTasks(): Promise<TaskWithRelations[]>;
+  getTasksPaginated(
+    page: number,
+    limit: number,
+    userId?: string,
+    patientId?: string,
+    userRole?: string
+  ): Promise<{ tasks: TaskWithRelations[]; total: number; totalPages: number }>;
   getTask(id: string): Promise<TaskWithRelations | undefined>;
   createTask(task: InsertTask): Promise<Task>;
   updateTask(id: string, task: Partial<InsertTask>): Promise<Task>;
   deleteTask(id: string): Promise<void>;
   getTasksByUser(userId: string): Promise<TaskWithRelations[]>;
   getTasksByPatient(patientId: string): Promise<TaskWithRelations[]>;
-  
+
   // Appointment operations
   getAppointments(): Promise<Appointment[]>;
   getAppointment(id: string): Promise<Appointment | undefined>;
   createAppointment(appointment: InsertAppointment): Promise<Appointment>;
-  updateAppointment(id: string, appointment: Partial<InsertAppointment>): Promise<Appointment>;
+  updateAppointment(
+    id: string,
+    appointment: Partial<InsertAppointment>
+  ): Promise<Appointment>;
   deleteAppointment(id: string): Promise<void>;
   getAppointmentsByPatient(patientId: string): Promise<Appointment[]>;
   getAppointmentsByProvider(providerId: string): Promise<Appointment[]>;
-  
+
   // Audit log operations
   createAuditLog(auditLog: InsertAuditLog): Promise<AuditLog>;
   getAuditLogs(patientId?: string): Promise<AuditLog[]>;
-  
+
   // Alert operations
   getAlerts(userId?: string): Promise<Alert[]>;
   getSystemScheduledAlerts(): Promise<Alert[]>;
   createAlert(alert: InsertAlert): Promise<Alert>;
   markAlertAsRead(id: string): Promise<void>;
   markAlertEmailSent(id: string): Promise<void>;
-  
+
   // Patient notes operations
   getPatientNotes(patientId: string): Promise<PatientNote[]>;
   createPatientNote(note: InsertPatientNote): Promise<PatientNote>;
-  updatePatientNote(id: string, note: Partial<InsertPatientNote>): Promise<PatientNote>;
+  updatePatientNote(
+    id: string,
+    note: Partial<InsertPatientNote>
+  ): Promise<PatientNote>;
   deletePatientNote(id: string): Promise<void>;
-  
+
   // Patient drop operations
-  dropPatient(patientId: string, dropReason: string, droppedBy: string): Promise<Patient>;
-  
+  dropPatient(
+    patientId: string,
+    dropReason: string,
+    droppedBy: string
+  ): Promise<Patient>;
+
   // Patient records operations
   getPatientRecords(patientId: string): Promise<PatientRecord[]>;
   createPatientRecord(record: InsertPatientRecord): Promise<PatientRecord>;
   deletePatientRecord(id: string): Promise<void>;
-  
+
   // Dashboard stats
   getDashboardStats(): Promise<{
     totalPatients: number;
@@ -118,13 +150,18 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(users).orderBy(desc(users.createdAt));
   }
 
-  async getUsersPaginated(page: number, limit: number): Promise<{ users: User[]; total: number; totalPages: number }> {
+  async getUsersPaginated(
+    page: number,
+    limit: number
+  ): Promise<{ users: User[]; total: number; totalPages: number }> {
     const offset = (page - 1) * limit;
-    
+
     // Get total count
-    const [{ count: totalCount }] = await db.select({ count: count() }).from(users);
+    const [{ count: totalCount }] = await db
+      .select({ count: count() })
+      .from(users);
     const total = Number(totalCount);
-    
+
     // Get paginated users
     const paginatedUsers = await db
       .select()
@@ -132,9 +169,9 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(users.createdAt))
       .limit(limit)
       .offset(offset);
-    
+
     const totalPages = Math.ceil(total / limit);
-    
+
     return {
       users: paginatedUsers,
       total,
@@ -144,8 +181,12 @@ export class DatabaseStorage implements IStorage {
 
   async upsertUser(userData: UpsertUser): Promise<User> {
     // First try to find user by OIDC subject (primary identifier)
-    const existingById = await db.select().from(users).where(eq(users.id, userData.id!)).limit(1);
-    
+    const existingById = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, userData.id!))
+      .limit(1);
+
     if (existingById.length > 0) {
       // Update existing user by ID (preserve primary key and existing role)
       const [user] = await db
@@ -162,13 +203,20 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return user;
     }
-    
+
     // Check if email exists with different ID (potential conflict)
-    const existingByEmail = await db.select().from(users).where(eq(users.email, userData.email!)).limit(1);
-    
+    const existingByEmail = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, userData.email!))
+      .limit(1);
+
     if (existingByEmail.length > 0) {
       // For admin users, ensure they have admin role but DON'T change ID (breaks foreign keys)
-      if (userData.email?.includes('@chirocare.com') || userData.email?.includes('admin')) {
+      if (
+        userData.email?.includes("@chirocare.com") ||
+        userData.email?.includes("admin")
+      ) {
         // Update user info but preserve existing ID to avoid foreign key violations
         const [user] = await db
           .update(users)
@@ -177,33 +225,32 @@ export class DatabaseStorage implements IStorage {
             firstName: userData.firstName,
             lastName: userData.lastName,
             profileImageUrl: userData.profileImageUrl,
-            role: 'admin', // Ensure admin role
+            role: "admin", // Ensure admin role
             updatedAt: new Date(),
           })
           .where(eq(users.email, userData.email!))
           .returning();
         return user;
       }
-      
+
       // For other users, return existing user without changes to avoid conflicts
-      console.warn(`Email conflict for ${userData.email}, using existing account`);
+      console.warn(
+        `Email conflict for ${userData.email}, using existing account`
+      );
       return existingByEmail[0];
     }
-    
+
     // Safe to insert new user
-    const [user] = await db
-      .insert(users)
-      .values(userData)
-      .returning();
+    const [user] = await db.insert(users).values(userData).returning();
     return user;
   }
 
   async updateUser(id: string, updates: Partial<UpsertUser>): Promise<User> {
     const [user] = await db
       .update(users)
-      .set({ 
+      .set({
         ...updates,
-        updatedAt: new Date() 
+        updatedAt: new Date(),
       })
       .where(eq(users.id, id))
       .returning();
@@ -213,9 +260,9 @@ export class DatabaseStorage implements IStorage {
   async updateUserStatus(id: string, isActive: boolean): Promise<User> {
     const [user] = await db
       .update(users)
-      .set({ 
-        isActive, 
-        updatedAt: new Date() 
+      .set({
+        isActive,
+        updatedAt: new Date(),
       })
       .where(eq(users.id, id))
       .returning();
@@ -238,31 +285,36 @@ export class DatabaseStorage implements IStorage {
           firstName: sql<string | null>`attorney.first_name`,
           lastName: sql<string | null>`attorney.last_name`,
           profileImageUrl: sql<string | null>`attorney.profile_image_url`,
-          role: sql<'admin' | 'staff' | 'attorney' | null>`attorney.role`,
+          role: sql<"admin" | "staff" | "attorney" | null>`attorney.role`,
           isActive: sql<boolean | null>`attorney.is_active`,
           createdAt: sql<Date | null>`attorney.created_at`,
           updatedAt: sql<Date | null>`attorney.updated_at`,
-        }
+        },
       })
       .from(patients)
       .leftJoin(users, eq(patients.createdBy, users.id))
-      .leftJoin(sql`users AS attorney`, eq(patients.assignedAttorney, sql`attorney.id`))
+      .leftJoin(
+        sql`users AS attorney`,
+        eq(patients.assignedAttorney, sql`attorney.id`)
+      )
       .orderBy(desc(patients.createdAt));
-    
-    return rows.map(row => ({
+
+    return rows.map((row) => ({
       ...row.patient,
       createdBy: row.creator!,
-      assignedAttorney: row.attorney.id ? {
-        id: row.attorney.id,
-        email: row.attorney.email,
-        firstName: row.attorney.firstName,
-        lastName: row.attorney.lastName,
-        profileImageUrl: row.attorney.profileImageUrl,
-        role: row.attorney.role!,
-        isActive: row.attorney.isActive!,
-        createdAt: row.attorney.createdAt,
-        updatedAt: row.attorney.updatedAt,
-      } as User : undefined,
+      assignedAttorney: row.attorney.id
+        ? ({
+            id: row.attorney.id,
+            email: row.attorney.email,
+            firstName: row.attorney.firstName,
+            lastName: row.attorney.lastName,
+            profileImageUrl: row.attorney.profileImageUrl,
+            role: row.attorney.role!,
+            isActive: row.attorney.isActive!,
+            createdAt: row.attorney.createdAt,
+            updatedAt: row.attorney.updatedAt,
+          } as User)
+        : undefined,
     }));
   }
 
@@ -277,45 +329,50 @@ export class DatabaseStorage implements IStorage {
           firstName: sql<string | null>`attorney.first_name`,
           lastName: sql<string | null>`attorney.last_name`,
           profileImageUrl: sql<string | null>`attorney.profile_image_url`,
-          role: sql<'admin' | 'staff' | 'attorney' | null>`attorney.role`,
+          role: sql<"admin" | "staff" | "attorney" | null>`attorney.role`,
           isActive: sql<boolean | null>`attorney.is_active`,
           createdAt: sql<Date | null>`attorney.created_at`,
           updatedAt: sql<Date | null>`attorney.updated_at`,
-        }
+        },
       })
       .from(patients)
       .leftJoin(users, eq(patients.createdBy, users.id))
-      .leftJoin(sql`users AS attorney`, eq(patients.assignedAttorney, sql`attorney.id`))
+      .leftJoin(
+        sql`users AS attorney`,
+        eq(patients.assignedAttorney, sql`attorney.id`)
+      )
       .where(eq(patients.id, id));
-    
+
     if (!result) return undefined;
-    
+
     return {
       ...result.patient,
       createdBy: result.creator!,
-      assignedAttorney: result.attorney.id ? {
-        id: result.attorney.id,
-        email: result.attorney.email,
-        firstName: result.attorney.firstName,
-        lastName: result.attorney.lastName,
-        profileImageUrl: result.attorney.profileImageUrl,
-        role: result.attorney.role!,
-        isActive: result.attorney.isActive!,
-        createdAt: result.attorney.createdAt,
-        updatedAt: result.attorney.updatedAt,
-      } as User : undefined,
+      assignedAttorney: result.attorney.id
+        ? ({
+            id: result.attorney.id,
+            email: result.attorney.email,
+            firstName: result.attorney.firstName,
+            lastName: result.attorney.lastName,
+            profileImageUrl: result.attorney.profileImageUrl,
+            role: result.attorney.role!,
+            isActive: result.attorney.isActive!,
+            createdAt: result.attorney.createdAt,
+            updatedAt: result.attorney.updatedAt,
+          } as User)
+        : undefined,
     };
   }
 
   async createPatient(patient: InsertPatient): Promise<Patient> {
-    const [newPatient] = await db
-      .insert(patients)
-      .values(patient)
-      .returning();
+    const [newPatient] = await db.insert(patients).values(patient).returning();
     return newPatient;
   }
 
-  async updatePatient(id: string, patient: Partial<InsertPatient>): Promise<Patient> {
+  async updatePatient(
+    id: string,
+    patient: Partial<InsertPatient>
+  ): Promise<Patient> {
     const [updatedPatient] = await db
       .update(patients)
       .set({ ...patient, updatedAt: new Date() })
@@ -339,70 +396,93 @@ export class DatabaseStorage implements IStorage {
           firstName: sql<string | null>`attorney.first_name`,
           lastName: sql<string | null>`attorney.last_name`,
           profileImageUrl: sql<string | null>`attorney.profile_image_url`,
-          role: sql<'admin' | 'staff' | 'attorney' | null>`attorney.role`,
+          role: sql<"admin" | "staff" | "attorney" | null>`attorney.role`,
           isActive: sql<boolean | null>`attorney.is_active`,
           createdAt: sql<Date | null>`attorney.created_at`,
           updatedAt: sql<Date | null>`attorney.updated_at`,
-        }
+        },
       })
       .from(patients)
       .leftJoin(users, eq(patients.createdBy, users.id))
-      .leftJoin(sql`users AS attorney`, eq(patients.assignedAttorney, sql`attorney.id`))
+      .leftJoin(
+        sql`users AS attorney`,
+        eq(patients.assignedAttorney, sql`attorney.id`)
+      )
       .where(eq(patients.status, status as any))
       .orderBy(desc(patients.createdAt));
-    
-    return rows.map(row => ({
+
+    return rows.map((row) => ({
       ...row.patient,
       createdBy: row.creator!,
-      assignedAttorney: row.attorney.id ? {
-        id: row.attorney.id,
-        email: row.attorney.email,
-        firstName: row.attorney.firstName,
-        lastName: row.attorney.lastName,
-        profileImageUrl: row.attorney.profileImageUrl,
-        role: row.attorney.role!,
-        isActive: row.attorney.isActive!,
-        createdAt: row.attorney.createdAt,
-        updatedAt: row.attorney.updatedAt,
-      } as User : undefined,
+      assignedAttorney: row.attorney.id
+        ? ({
+            id: row.attorney.id,
+            email: row.attorney.email,
+            firstName: row.attorney.firstName,
+            lastName: row.attorney.lastName,
+            profileImageUrl: row.attorney.profileImageUrl,
+            role: row.attorney.role!,
+            isActive: row.attorney.isActive!,
+            createdAt: row.attorney.createdAt,
+            updatedAt: row.attorney.updatedAt,
+          } as User)
+        : undefined,
     }));
   }
 
-  async getPatientsPaginated(page: number, limit: number, status?: string, userId?: string, userRole?: string): Promise<{ patients: PatientWithCreator[]; total: number; totalPages: number }> {
+  async getPatientsPaginated(
+    page: number,
+    limit: number,
+    status?: string,
+    userId?: string,
+    userRole?: string
+  ): Promise<{
+    patients: PatientWithCreator[];
+    total: number;
+    totalPages: number;
+  }> {
     const offset = (page - 1) * limit;
-    
-    console.log(`[getPatientsPaginated] page=${page}, limit=${limit}, offset=${offset}, status=${status}, userId=${userId}, userRole=${userRole}`);
-    
+
+    console.log(
+      `[getPatientsPaginated] page=${page}, limit=${limit}, offset=${offset}, status=${status}, userId=${userId}, userRole=${userRole}`
+    );
+
     // Build where conditions
     const conditions: any[] = [];
-    
+
     // Add status filter if provided
     if (status) {
       conditions.push(eq(patients.status, status as any));
     }
-    
+
     // Add role-based filtering for non-admin users
-    if (userRole && userRole !== 'admin' && userId) {
-      if (userRole === 'staff') {
-        // Staff can only see patients they created
-        conditions.push(eq(patients.createdBy, userId));
-      } else if (userRole === 'attorney') {
+    if (userRole && userRole !== "admin" && userId) {
+      if (userRole === "staff") {
+        // Staff can see patients they created OR patients assigned to them
+        conditions.push(
+          or(
+            eq(patients.createdBy, userId),
+            eq(patients.assignedAttorney, userId)
+          )
+        );
+      } else if (userRole === "attorney") {
         // Attorneys can only see patients assigned to them
         conditions.push(eq(patients.assignedAttorney, userId));
       }
     }
-    
+
     // Get total count with all filters
     let countQuery = db.select({ count: count() }).from(patients);
     if (conditions.length > 0) {
-      const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+      const whereClause =
+        conditions.length === 1 ? conditions[0] : and(...conditions);
       countQuery = countQuery.where(whereClause) as any;
     }
     const [{ count: totalCount }] = await countQuery;
     const total = Number(totalCount);
-    
+
     console.log(`[getPatientsPaginated] Total count: ${total}`);
-    
+
     // Build select query with joins - ensure limit and offset are always applied
     const baseQuery = db
       .select({
@@ -414,20 +494,24 @@ export class DatabaseStorage implements IStorage {
           firstName: sql<string | null>`attorney.first_name`,
           lastName: sql<string | null>`attorney.last_name`,
           profileImageUrl: sql<string | null>`attorney.profile_image_url`,
-          role: sql<'admin' | 'staff' | 'attorney' | null>`attorney.role`,
+          role: sql<"admin" | "staff" | "attorney" | null>`attorney.role`,
           isActive: sql<boolean | null>`attorney.is_active`,
           createdAt: sql<Date | null>`attorney.created_at`,
           updatedAt: sql<Date | null>`attorney.updated_at`,
-        }
+        },
       })
       .from(patients)
       .leftJoin(users, eq(patients.createdBy, users.id))
-      .leftJoin(sql`users AS attorney`, eq(patients.assignedAttorney, sql`attorney.id`));
-    
+      .leftJoin(
+        sql`users AS attorney`,
+        eq(patients.assignedAttorney, sql`attorney.id`)
+      );
+
     // Apply where conditions if any, then order, limit, and offset in one chain
     let rows;
     if (conditions.length > 0) {
-      const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+      const whereClause =
+        conditions.length === 1 ? conditions[0] : and(...conditions);
       rows = await baseQuery
         .where(whereClause)
         .orderBy(desc(patients.createdAt))
@@ -439,29 +523,35 @@ export class DatabaseStorage implements IStorage {
         .limit(limit)
         .offset(offset);
     }
-    
-    console.log(`[getPatientsPaginated] Returned ${rows.length} rows (expected max ${limit})`);
-    
+
+    console.log(
+      `[getPatientsPaginated] Returned ${rows.length} rows (expected max ${limit})`
+    );
+
     const paginatedPatients = rows.map((row: any) => ({
       ...row.patient,
       createdBy: row.creator!,
-      assignedAttorney: row.attorney.id ? {
-        id: row.attorney.id,
-        email: row.attorney.email,
-        firstName: row.attorney.firstName,
-        lastName: row.attorney.lastName,
-        profileImageUrl: row.attorney.profileImageUrl,
-        role: row.attorney.role!,
-        isActive: row.attorney.isActive!,
-        createdAt: row.attorney.createdAt,
-        updatedAt: row.attorney.updatedAt,
-      } as User : undefined,
+      assignedAttorney: row.attorney.id
+        ? ({
+            id: row.attorney.id,
+            email: row.attorney.email,
+            firstName: row.attorney.firstName,
+            lastName: row.attorney.lastName,
+            profileImageUrl: row.attorney.profileImageUrl,
+            role: row.attorney.role!,
+            isActive: row.attorney.isActive!,
+            createdAt: row.attorney.createdAt,
+            updatedAt: row.attorney.updatedAt,
+          } as User)
+        : undefined,
     }));
-    
+
     const totalPages = Math.ceil(total / limit);
-    
-    console.log(`[getPatientsPaginated] Returning ${paginatedPatients.length} patients, total=${total}, totalPages=${totalPages}`);
-    
+
+    console.log(
+      `[getPatientsPaginated] Returning ${paginatedPatients.length} patients, total=${total}, totalPages=${totalPages}`
+    );
+
     return {
       patients: paginatedPatients,
       total,
@@ -469,7 +559,9 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
-  async getPatientsByAssignedAttorney(attorneyId: string): Promise<PatientWithCreator[]> {
+  async getPatientsByAssignedAttorney(
+    attorneyId: string
+  ): Promise<PatientWithCreator[]> {
     const rows = await db
       .select({
         patient: patients,
@@ -480,32 +572,37 @@ export class DatabaseStorage implements IStorage {
           firstName: sql<string | null>`attorney.first_name`,
           lastName: sql<string | null>`attorney.last_name`,
           profileImageUrl: sql<string | null>`attorney.profile_image_url`,
-          role: sql<'admin' | 'staff' | 'attorney' | null>`attorney.role`,
+          role: sql<"admin" | "staff" | "attorney" | null>`attorney.role`,
           isActive: sql<boolean | null>`attorney.is_active`,
           createdAt: sql<Date | null>`attorney.created_at`,
           updatedAt: sql<Date | null>`attorney.updated_at`,
-        }
+        },
       })
       .from(patients)
       .leftJoin(users, eq(patients.createdBy, users.id))
-      .leftJoin(sql`users AS attorney`, eq(patients.assignedAttorney, sql`attorney.id`))
+      .leftJoin(
+        sql`users AS attorney`,
+        eq(patients.assignedAttorney, sql`attorney.id`)
+      )
       .where(eq(patients.assignedAttorney, attorneyId))
       .orderBy(desc(patients.createdAt));
-    
-    return rows.map(row => ({
+
+    return rows.map((row) => ({
       ...row.patient,
       createdBy: row.creator!,
-      assignedAttorney: row.attorney.id ? {
-        id: row.attorney.id,
-        email: row.attorney.email,
-        firstName: row.attorney.firstName,
-        lastName: row.attorney.lastName,
-        profileImageUrl: row.attorney.profileImageUrl,
-        role: row.attorney.role!,
-        isActive: row.attorney.isActive!,
-        createdAt: row.attorney.createdAt,
-        updatedAt: row.attorney.updatedAt,
-      } as User : undefined,
+      assignedAttorney: row.attorney.id
+        ? ({
+            id: row.attorney.id,
+            email: row.attorney.email,
+            firstName: row.attorney.firstName,
+            lastName: row.attorney.lastName,
+            profileImageUrl: row.attorney.profileImageUrl,
+            role: row.attorney.role!,
+            isActive: row.attorney.isActive!,
+            createdAt: row.attorney.createdAt,
+            updatedAt: row.attorney.updatedAt,
+          } as User)
+        : undefined,
     }));
   }
 
@@ -517,14 +614,14 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(patients, eq(tasks.patientId, patients.id))
       .leftJoin(users, eq(tasks.assignedTo, users.id))
       .orderBy(desc(tasks.createdAt));
-    
+
     const tasksWithCreator = await Promise.all(
       rows.map(async (row) => {
         const [creator] = await db
           .select()
           .from(users)
           .where(eq(users.id, row.tasks.createdBy));
-        
+
         return {
           ...row.tasks,
           patient: row.patients || undefined,
@@ -536,6 +633,114 @@ export class DatabaseStorage implements IStorage {
     return tasksWithCreator;
   }
 
+  async getTasksPaginated(
+    page: number,
+    limit: number,
+    userId?: string,
+    patientId?: string,
+    userRole?: string
+  ): Promise<{
+    tasks: TaskWithRelations[];
+    total: number;
+    totalPages: number;
+  }> {
+    const offset = (page - 1) * limit;
+
+    console.log(
+      `[getTasksPaginated] page=${page}, limit=${limit}, offset=${offset}, userId=${userId}, patientId=${patientId}, userRole=${userRole}`
+    );
+
+    // Build where conditions
+    const conditions: any[] = [];
+
+    // Add patient filter if provided
+    if (patientId) {
+      conditions.push(eq(tasks.patientId, patientId));
+    }
+
+    // Add role-based filtering for non-admin users
+    if (userRole && userRole !== "admin" && userId) {
+      // Non-admins only see tasks assigned to them
+      conditions.push(eq(tasks.assignedTo, userId));
+    } else if (userId && userRole === "admin") {
+      // Admin can optionally filter by userId, but if not provided, see all
+      // This is handled by not adding the condition
+    }
+
+    // Get total count with all filters
+    let countQuery = db.select({ count: count() }).from(tasks);
+    if (conditions.length > 0) {
+      const whereClause =
+        conditions.length === 1 ? conditions[0] : and(...conditions);
+      countQuery = countQuery.where(whereClause) as any;
+    }
+    const [{ count: totalCount }] = await countQuery;
+    const total = Number(totalCount);
+
+    console.log(`[getTasksPaginated] Total count: ${total}`);
+
+    // Build select query with joins
+    const baseQuery = db
+      .select({
+        task: tasks,
+        patient: patients,
+        assignedUser: users,
+      })
+      .from(tasks)
+      .leftJoin(patients, eq(tasks.patientId, patients.id))
+      .leftJoin(users, eq(tasks.assignedTo, users.id));
+
+    // Apply where conditions if any, then order, limit, and offset
+    let rows;
+    if (conditions.length > 0) {
+      const whereClause =
+        conditions.length === 1 ? conditions[0] : and(...conditions);
+      rows = await baseQuery
+        .where(whereClause)
+        .orderBy(desc(tasks.createdAt))
+        .limit(limit)
+        .offset(offset);
+    } else {
+      rows = await baseQuery
+        .orderBy(desc(tasks.createdAt))
+        .limit(limit)
+        .offset(offset);
+    }
+
+    console.log(
+      `[getTasksPaginated] Returned ${rows.length} rows (expected max ${limit})`
+    );
+
+    // Get creators for all tasks
+    const tasksWithCreator = await Promise.all(
+      rows.map(async (row: any) => {
+        const [creator] = await db
+          .select()
+          .from(users)
+          .where(eq(users.id, row.task.createdBy));
+
+        return {
+          ...row.task,
+          patient: row.patient || undefined,
+          assignedTo: row.assignedUser!,
+          createdBy: creator!,
+        } as TaskWithRelations;
+      })
+    );
+
+    const totalPages = Math.ceil(total / limit);
+
+    console.log(
+      `[getTasksPaginated] Returning ${tasksWithCreator.length} tasks, total=${total}, totalPages=${totalPages}`
+    );
+
+    return {
+      tasks: tasksWithCreator,
+      total,
+      totalPages,
+    };
+  }
+
   async getTask(id: string): Promise<TaskWithRelations | undefined> {
     const [result] = await db
       .select()
@@ -543,14 +748,14 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(patients, eq(tasks.patientId, patients.id))
       .leftJoin(users, eq(tasks.assignedTo, users.id))
       .where(eq(tasks.id, id));
-    
+
     if (!result) return undefined;
-    
+
     const [creator] = await db
       .select()
       .from(users)
       .where(eq(users.id, result.tasks.createdBy));
-    
+
     return {
       ...result.tasks,
       patient: result.patients || undefined,
@@ -560,10 +765,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createTask(task: InsertTask): Promise<Task> {
-    const [newTask] = await db
-      .insert(tasks)
-      .values(task)
-      .returning();
+    const [newTask] = await db.insert(tasks).values(task).returning();
     return newTask;
   }
 
@@ -588,14 +790,14 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(tasks.assignedTo, users.id))
       .where(eq(tasks.assignedTo, userId))
       .orderBy(desc(tasks.createdAt));
-    
+
     const tasksWithCreator = await Promise.all(
       rows.map(async (row) => {
         const [creator] = await db
           .select()
           .from(users)
           .where(eq(users.id, row.tasks.createdBy));
-        
+
         return {
           ...row.tasks,
           patient: row.patients || undefined,
@@ -615,14 +817,14 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(users, eq(tasks.assignedTo, users.id))
       .where(eq(tasks.patientId, patientId))
       .orderBy(desc(tasks.createdAt));
-    
+
     const tasksWithCreator = await Promise.all(
       rows.map(async (row) => {
         const [creator] = await db
           .select()
           .from(users)
           .where(eq(users.id, row.tasks.createdBy));
-        
+
         return {
           ...row.tasks,
           patient: row.patients || undefined,
@@ -650,7 +852,9 @@ export class DatabaseStorage implements IStorage {
     return appointment;
   }
 
-  async createAppointment(appointment: InsertAppointment): Promise<Appointment> {
+  async createAppointment(
+    appointment: InsertAppointment
+  ): Promise<Appointment> {
     const [newAppointment] = await db
       .insert(appointments)
       .values(appointment)
@@ -658,7 +862,10 @@ export class DatabaseStorage implements IStorage {
     return newAppointment;
   }
 
-  async updateAppointment(id: string, appointment: Partial<InsertAppointment>): Promise<Appointment> {
+  async updateAppointment(
+    id: string,
+    appointment: Partial<InsertAppointment>
+  ): Promise<Appointment> {
     const [updatedAppointment] = await db
       .update(appointments)
       .set({ ...appointment, updatedAt: new Date() })
@@ -698,49 +905,47 @@ export class DatabaseStorage implements IStorage {
 
   async getAuditLogs(patientId?: string): Promise<AuditLog[]> {
     const query = db.select().from(auditLogs);
-    
+
     if (patientId) {
       return await query
         .where(eq(auditLogs.patientId, patientId))
         .orderBy(desc(auditLogs.createdAt));
     }
-    
+
     return await query.orderBy(desc(auditLogs.createdAt));
   }
 
   // Alert operations
   async getAlerts(userId?: string): Promise<Alert[]> {
     const query = db.select().from(alerts);
-    
+
     if (userId) {
       return await query
         .where(eq(alerts.userId, userId))
         .orderBy(desc(alerts.createdAt));
     }
-    
+
     return await query.orderBy(desc(alerts.createdAt));
   }
 
   async getSystemScheduledAlerts(): Promise<Alert[]> {
     // Only get system alerts that are scheduled (not user notifications)
-    return await db.select().from(alerts)
-      .where(sql`${alerts.userId} IS NULL AND ${alerts.scheduledFor} IS NOT NULL`)
+    return await db
+      .select()
+      .from(alerts)
+      .where(
+        sql`${alerts.userId} IS NULL AND ${alerts.scheduledFor} IS NOT NULL`
+      )
       .orderBy(desc(alerts.createdAt));
   }
 
   async createAlert(alert: InsertAlert): Promise<Alert> {
-    const [newAlert] = await db
-      .insert(alerts)
-      .values(alert)
-      .returning();
+    const [newAlert] = await db.insert(alerts).values(alert).returning();
     return newAlert;
   }
 
   async markAlertAsRead(id: string): Promise<void> {
-    await db
-      .update(alerts)
-      .set({ isRead: true })
-      .where(eq(alerts.id, id));
+    await db.update(alerts).set({ isRead: true }).where(eq(alerts.id, id));
   }
 
   async markAlertEmailSent(id: string): Promise<void> {
@@ -760,14 +965,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPatientNote(note: InsertPatientNote): Promise<PatientNote> {
-    const [newNote] = await db
-      .insert(patientNotes)
-      .values(note)
-      .returning();
+    const [newNote] = await db.insert(patientNotes).values(note).returning();
     return newNote;
   }
 
-  async updatePatientNote(id: string, note: Partial<InsertPatientNote>): Promise<PatientNote> {
+  async updatePatientNote(
+    id: string,
+    note: Partial<InsertPatientNote>
+  ): Promise<PatientNote> {
     const [updatedNote] = await db
       .update(patientNotes)
       .set({ ...note, updatedAt: new Date() })
@@ -777,17 +982,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePatientNote(id: string): Promise<void> {
-    await db
-      .delete(patientNotes)
-      .where(eq(patientNotes.id, id));
+    await db.delete(patientNotes).where(eq(patientNotes.id, id));
   }
 
   // Patient drop operations
-  async dropPatient(patientId: string, dropReason: string, droppedBy: string): Promise<Patient> {
+  async dropPatient(
+    patientId: string,
+    dropReason: string,
+    droppedBy: string
+  ): Promise<Patient> {
     const [patient] = await db
       .update(patients)
       .set({
-        status: 'dropped',
+        status: "dropped",
         dropReason,
         droppedBy,
         droppedAt: new Date(),
@@ -807,7 +1014,9 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(patientRecords.createdAt));
   }
 
-  async createPatientRecord(record: InsertPatientRecord): Promise<PatientRecord> {
+  async createPatientRecord(
+    record: InsertPatientRecord
+  ): Promise<PatientRecord> {
     const [newRecord] = await db
       .insert(patientRecords)
       .values(record)
@@ -816,9 +1025,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePatientRecord(id: string): Promise<void> {
-    await db
-      .delete(patientRecords)
-      .where(eq(patientRecords.id, id));
+    await db.delete(patientRecords).where(eq(patientRecords.id, id));
   }
 
   // Dashboard stats
@@ -828,27 +1035,27 @@ export class DatabaseStorage implements IStorage {
     consentSigned: number;
     schedulable: number;
   }> {
-    const [totalPatients] = await db
-      .select({ count: count() })
-      .from(patients);
+    const [totalPatients] = await db.select({ count: count() }).from(patients);
 
     const [pendingConsent] = await db
       .select({ count: count() })
       .from(patients)
-      .where(or(
-        eq(patients.status, 'pending_consent'),
-        eq(patients.status, 'consent_sent')
-      ));
+      .where(
+        or(
+          eq(patients.status, "pending_consent"),
+          eq(patients.status, "consent_sent")
+        )
+      );
 
     const [consentSigned] = await db
       .select({ count: count() })
       .from(patients)
-      .where(eq(patients.status, 'consent_signed'));
+      .where(eq(patients.status, "consent_signed"));
 
     const [schedulable] = await db
       .select({ count: count() })
       .from(patients)
-      .where(eq(patients.status, 'schedulable'));
+      .where(eq(patients.status, "schedulable"));
 
     return {
       totalPatients: totalPatients.count,

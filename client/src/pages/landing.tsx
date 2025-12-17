@@ -384,7 +384,12 @@ export default function Landing() {
                     type="text"
                     placeholder="John"
                     value={regFirstName}
-                    onChange={(e) => setRegFirstName(e.target.value)}
+                    onChange={(e) =>
+                      setRegFirstName(
+                        e.target.value.charAt(0).toUpperCase() +
+                          e.target.value.slice(1).toLowerCase()
+                      )
+                    }
                     required
                     disabled={isRegistering}
                   />
@@ -396,7 +401,12 @@ export default function Landing() {
                     type="text"
                     placeholder="Doe"
                     value={regLastName}
-                    onChange={(e) => setRegLastName(e.target.value)}
+                    onChange={(e) =>
+                      setRegLastName(
+                        e.target.value.charAt(0).toUpperCase() +
+                          e.target.value.slice(1).toLowerCase()
+                      )
+                    }
                     required
                     disabled={isRegistering}
                   />

@@ -62,6 +62,7 @@ import {
   UserIcon,
   FileTextIcon,
   MailIcon,
+  FileCheckIcon,
 } from "lucide-react";
 
 interface PaginatedPatientsResponse {
@@ -511,7 +512,7 @@ export default function Patients() {
                   <p className="text-muted-foreground">Loading patients...</p>
                 </div>
               ) : filteredPatients.length === 0 ? (
-                <div className="text-center py-8">
+                <div className="flex flex-col items-center justify-center text-center py-8">
                   <UsersIcon className="w-10 h-10 text-muted-foreground mb-4" />
                   <p className="text-muted-foreground">No patients found</p>
                 </div>
@@ -594,119 +595,138 @@ export default function Patients() {
                                     title="Override Status (Admin Only)"
                                     data-testid={`button-status-override-${patient.id}`}
                                     onClick={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                   >
                                     ⚙️
                                   </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
+                                <DropdownMenuContent
+                                  align="end"
+                                  onClick={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                >
                                   <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
                                     Admin Override
                                   </div>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
-                                    onClick={() =>
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       statusOverrideMutation.mutate({
                                         patientId: patient.id,
                                         status: "pending_consent",
-                                      })
-                                    }
+                                      });
+                                    }}
                                     disabled={
                                       patient.status === "pending_consent" ||
                                       statusOverrideMutation.isPending
                                     }
                                   >
-                                    <ClockIcon className="w-4 h-4 mr-2 text-yellow-500" />
+                                    <ClockIcon className="w-4 h-4 mr-2 text-yellow-500 cursor-pointer" />
                                     Pending Consent
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() =>
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       statusOverrideMutation.mutate({
                                         patientId: patient.id,
                                         status: "consent_sent",
-                                      })
-                                    }
+                                      });
+                                    }}
                                     disabled={
                                       patient.status === "consent_sent" ||
                                       statusOverrideMutation.isPending
                                     }
                                   >
-                                    <SendIcon className="w-4 h-4 mr-2 text-blue-500" />
+                                    <SendIcon className="w-4 h-4 mr-2 text-blue-500 cursor-pointer" />
                                     Consent Sent
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() =>
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       statusOverrideMutation.mutate({
                                         patientId: patient.id,
                                         status: "consent_signed",
-                                      })
-                                    }
+                                      });
+                                    }}
                                     disabled={
                                       patient.status === "consent_signed" ||
                                       statusOverrideMutation.isPending
                                     }
                                   >
-                                    <CheckCircleIcon className="w-4 h-4 mr-2 text-green-500" />
+                                    <FileCheckIcon className="w-4 h-4 mr-2 text-green-500 cursor-pointer" />
                                     Consent Signed
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() =>
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       statusOverrideMutation.mutate({
                                         patientId: patient.id,
                                         status: "schedulable",
-                                      })
-                                    }
+                                      });
+                                    }}
                                     disabled={
                                       patient.status === "schedulable" ||
                                       statusOverrideMutation.isPending
                                     }
                                   >
-                                    <CalendarCheckIcon className="w-4 h-4 mr-2 text-purple-500" />
+                                    <CalendarCheckIcon className="w-4 h-4 mr-2 text-purple-500 cursor-pointer" />
                                     Schedulable
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() =>
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       statusOverrideMutation.mutate({
                                         patientId: patient.id,
                                         status: "treatment_completed",
-                                      })
-                                    }
+                                      });
+                                    }}
                                     disabled={
                                       patient.status ===
                                         "treatment_completed" ||
                                       statusOverrideMutation.isPending
                                     }
                                   >
-                                    <CheckCircleIcon className="w-4 h-4 mr-2 text-emerald-500" />
+                                    <CheckCircleIcon className="w-4 h-4 mr-2 text-emerald-500 cursor-pointer" />
                                     Treatment Completed
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() =>
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       statusOverrideMutation.mutate({
                                         patientId: patient.id,
                                         status: "pending_records",
-                                      })
-                                    }
+                                      });
+                                    }}
                                     disabled={
                                       patient.status === "pending_records" ||
                                       statusOverrideMutation.isPending
                                     }
                                   >
-                                    <FileTextIcon className="w-4 h-4 mr-2 text-orange-500" />
+                                    <FileTextIcon className="w-4 h-4 mr-2 text-orange-500 cursor-pointer" />
                                     Pending Records
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
-                                    onClick={() =>
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       statusOverrideMutation.mutate({
                                         patientId: patient.id,
                                         status: "records_forwarded",
-                                      })
-                                    }
+                                      });
+                                    }}
                                     disabled={
                                       patient.status === "records_forwarded" ||
                                       statusOverrideMutation.isPending
                                     }
                                   >
-                                    <ShareIcon className="w-4 h-4 mr-2 text-indigo-500" />
+                                    <ShareIcon className="w-4 h-4 mr-2 text-indigo-500 cursor-pointer" />
                                     Records Forwarded
                                   </DropdownMenuItem>
                                 </DropdownMenuContent>
