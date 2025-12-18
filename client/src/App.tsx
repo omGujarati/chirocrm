@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
 import { SidebarProvider } from "@/hooks/useSidebar";
+import AuthLoadingScreen from "@/components/auth/auth-loading-screen";
 import Landing from "@/pages/landing";
 import Dashboard from "@/pages/dashboard";
 import Patients from "@/pages/patients";
@@ -12,7 +13,6 @@ import Users from "@/pages/users";
 import Tasks from "@/pages/tasks";
 import Schedule from "@/pages/schedule";
 import ConsentForms from "@/pages/consent-forms";
-import AuditLogs from "@/pages/audit-logs";
 import Settings from "@/pages/settings";
 import ChangePassword from "@/pages/change-password";
 import NotFound from "@/pages/not-found";
@@ -21,8 +21,12 @@ import AddPatientModal from "@/components/modals/add-patient-modal";
 function Router() {
   const { isAuthenticated, isLoading, user } = useAuth();
 
+  if (isLoading) {
+    return <AuthLoadingScreen />;
+  }
+
   // SECURITY: Show Landing for unauthenticated users, but don't interfere with API routes
-  if (isLoading || !isAuthenticated) {
+  if (!isAuthenticated) {
     return (
       <Switch>
         {/* Specific frontend routes that should show Landing when unauthenticated */}
@@ -33,7 +37,7 @@ function Router() {
         <Route path="/tasks" component={Landing} />
         <Route path="/schedule" component={Landing} />
         <Route path="/consent-forms" component={Landing} />
-        <Route path="/audit-logs" component={Landing} />
+        {/* Audit logs page removed */}
         <Route path="/settings" component={Landing} />
         {/* API routes are NOT handled by React router - they go to server */}
       </Switch>
@@ -56,17 +60,25 @@ function Router() {
   }
 
   // Authenticated users see normal routing
+  const isAdmin = user?.role === "admin";
   return (
     <>
       <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/dashboard" component={Dashboard} />
+        {/* Admin-only landing/dashboard routes */}
+        <Route path="/">
+          {() => (isAdmin ? <Dashboard /> : <Redirect to="/patients" />)}
+        </Route>
+        <Route path="/dashboard">
+          {() => (isAdmin ? <Dashboard /> : <Redirect to="/patients" />)}
+        </Route>
         <Route path="/patients" component={Patients} />
-        <Route path="/users" component={Users} />
+        {/* Users page is admin-only; staff/attorney are redirected to Patients */}
+        <Route path="/users">
+          {() => (isAdmin ? <Users /> : <Redirect to="/patients" />)}
+        </Route>
         <Route path="/tasks" component={Tasks} />
         <Route path="/schedule" component={Schedule} />
         <Route path="/consent-forms" component={ConsentForms} />
-        <Route path="/audit-logs" component={AuditLogs} />
         <Route path="/settings" component={Settings} />
         <Route path="/change-password" component={ChangePassword} />
         <Route component={NotFound} />

@@ -379,7 +379,7 @@ export default function Tasks() {
                   {tasks.map((task) => (
                     <div
                       key={task.id}
-                      className="flex items-start space-x-3 p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors"
+                      className="flex items-start gap-3 p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors"
                       data-testid={`task-item-${task.id}`}
                     >
                       <div
@@ -388,38 +388,38 @@ export default function Tasks() {
                         )}`}
                       ></div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h4 className="font-medium text-foreground">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium text-foreground truncate">
                               {task.title}
                             </h4>
                             {task.description && (
-                              <p className="text-sm text-muted-foreground mt-1">
+                              <p className="text-sm text-muted-foreground mt-1 break-words">
                                 {task.description}
                               </p>
                             )}
-                            <div className="flex items-center space-x-4 mt-2">
-                              <p className="text-xs text-muted-foreground">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
+                              <p className="text-xs text-muted-foreground whitespace-nowrap">
                                 Assigned to: {task.assignedTo?.firstName}{" "}
                                 {task.assignedTo?.lastName}
                               </p>
                               {task.patient && (
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-xs text-muted-foreground whitespace-nowrap">
                                   Patient: {task.patient.firstName}{" "}
                                   {task.patient.lastName}
                                 </p>
                               )}
                               {task.dueDate && (
-                                <p className="text-xs text-muted-foreground">
+                                <p className="text-xs text-muted-foreground whitespace-nowrap">
                                   Due:{" "}
                                   {new Date(task.dueDate).toLocaleDateString()}
                                 </p>
                               )}
                             </div>
                           </div>
-                          <div className="flex items-center space-x-2 ml-4">
+                          <div className="flex items-center gap-2 flex-shrink-0">
                             <Badge
-                              className={`text-xs font-medium border ${getStatusColor(
+                              className={`text-xs font-medium border whitespace-nowrap ${getStatusColor(
                                 task.status
                               )}`}
                             >
@@ -439,6 +439,7 @@ export default function Tasks() {
                                   ? "Task already completed"
                                   : "Mark as completed"
                               }
+                              className="flex-shrink-0"
                             >
                               <CheckIcon className="w-4 h-4" />
                             </Button>

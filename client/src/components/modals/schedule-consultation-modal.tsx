@@ -45,6 +45,14 @@ interface ScheduleConsultationModalProps {
     consultationTime?: string | null;
     consultationLocation?: string | null;
   };
+  appointment?: {
+    id: string;
+    patientId: string;
+    scheduledAt: string;
+    duration: number;
+    status: string;
+    notes?: string | null;
+  };
   showPatients?: boolean;
 }
 
@@ -74,16 +82,20 @@ export default function ScheduleConsultationModal({
   open,
   onOpenChange,
   patient,
+  appointment,
   showPatients = false,
 }: ScheduleConsultationModalProps) {
   const [isOpen, setIsOpen] = useState(open || false);
   const [selectedPatientId, setSelectedPatientId] = useState<string>(
-    patient?.id || ""
+    patient?.id || appointment?.patientId || ""
   );
   const { toast } = useToast();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const lastProcessedPatientId = useRef<string | null>(null);
+
+  // Determine if we're editing an appointment
+  const isEditingAppointment = !!appointment;
 
   // Fetch patients when showPatients is true
   const { data: patientsData } = useQuery({
@@ -130,6 +142,25 @@ export default function ScheduleConsultationModal({
     ? patients.find((p: any) => p.id === selectedPatientId) || patient
     : patient;
 
+  // Fetch patient data when editing appointment (if not already provided)
+  const { data: appointmentPatient } = useQuery({
+    queryKey: ["/api/patients", appointment?.patientId],
+    queryFn: async () => {
+      if (!appointment?.patientId) return null;
+      const response = await apiRequest(
+        "GET",
+        `/api/patients/${appointment.patientId}`
+      );
+      const data = await response.json();
+      return data.patients ? data.patients[0] : data;
+    },
+    enabled: isEditingAppointment && !!appointment?.patientId && !patient,
+    retry: false,
+  });
+
+  // Use appointmentPatient if patient is not provided
+  const effectivePatient = patient || appointmentPatient;
+
   useEffect(() => {
     if (open !== undefined) {
       setIsOpen(open);
@@ -143,29 +174,56 @@ export default function ScheduleConsultationModal({
   const form = useForm<FormData>({
     resolver: zodResolver(baseFormSchema),
     defaultValues: {
-      patientId: patient?.id || "",
-      consultationDate: patient?.consultationDate
-        ? new Date(patient.consultationDate)
+      patientId: effectivePatient?.id || appointment?.patientId || "",
+      consultationDate: appointment?.scheduledAt
+        ? new Date(appointment.scheduledAt)
+        : effectivePatient?.consultationDate
+        ? new Date(effectivePatient.consultationDate)
         : undefined,
-      consultationTime: patient?.consultationTime || "",
-      consultationLocation: patient?.consultationLocation || "",
+      consultationTime: appointment?.scheduledAt
+        ? new Date(appointment.scheduledAt).toLocaleTimeString("en-US", {
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : effectivePatient?.consultationTime || "",
+      consultationLocation:
+        appointment?.notes || effectivePatient?.consultationLocation || "",
     },
   });
 
-  // Reset form when patient prop changes (not when selectedPatientId changes to avoid loop)
+  // Reset form when patient or appointment prop changes
   useEffect(() => {
-    if (!showPatients && patient) {
+    if (isEditingAppointment && appointment) {
+      const scheduledDate = new Date(appointment.scheduledAt);
       form.reset({
-        patientId: patient.id,
-        consultationDate: patient.consultationDate
-          ? new Date(patient.consultationDate)
-          : undefined,
-        consultationTime: patient.consultationTime || "",
-        consultationLocation: patient.consultationLocation || "",
+        patientId: appointment.patientId,
+        consultationDate: scheduledDate,
+        consultationTime: scheduledDate.toLocaleTimeString("en-US", {
+          hour12: false,
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        consultationLocation: appointment.notes || "",
       });
-      setSelectedPatientId(patient.id);
+      setSelectedPatientId(appointment.patientId);
+    } else if (!showPatients && effectivePatient) {
+      form.reset({
+        patientId: effectivePatient.id,
+        consultationDate: effectivePatient.consultationDate
+          ? new Date(effectivePatient.consultationDate)
+          : undefined,
+        consultationTime: effectivePatient.consultationTime || "",
+        consultationLocation: effectivePatient.consultationLocation || "",
+      });
+      setSelectedPatientId(effectivePatient.id);
     }
-  }, [patient?.id, showPatients]);
+  }, [
+    effectivePatient?.id,
+    appointment?.id,
+    showPatients,
+    isEditingAppointment,
+  ]);
 
   // Update form when selectedPatientId changes (only in showPatients mode)
   useEffect(() => {
@@ -200,9 +258,32 @@ export default function ScheduleConsultationModal({
 
   const scheduleConsultationMutation = useMutation({
     mutationFn: async (data: FormData) => {
+      // Extract appointment patientId before type narrowing
+      const appointmentPatientId = appointment?.patientId || "";
+
+      // If editing an appointment, use appointment update endpoint
+      if (isEditingAppointment && appointment) {
+        // Combine date and time into scheduledAt timestamp
+        const [hours, minutes] = data.consultationTime.split(":").map(Number);
+        const scheduledDate = new Date(data.consultationDate);
+        scheduledDate.setHours(hours, minutes, 0, 0);
+
+        const response = await apiRequest(
+          "PUT",
+          `/api/appointments/${appointment.id}`,
+          {
+            scheduledAt: scheduledDate.toISOString(),
+            duration: appointment.duration || 60,
+            notes: data.consultationLocation || null,
+          }
+        );
+        return response.json();
+      }
+
+      // Otherwise, use patient schedule endpoint
       const patientIdToUse = showPatients
         ? data.patientId || ""
-        : patient?.id || "";
+        : effectivePatient?.id || appointmentPatientId || "";
       if (!patientIdToUse) throw new Error("No patient selected");
 
       if (showPatients && !data.patientId) {
@@ -225,12 +306,18 @@ export default function ScheduleConsultationModal({
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       toast({
         title: "Success",
-        description: data.message || "Consultation scheduled successfully",
+        description:
+          data.message ||
+          (isEditingAppointment
+            ? "Appointment updated successfully"
+            : "Consultation scheduled successfully"),
       });
       setIsOpen(false);
       onOpenChange?.(false);
       form.reset();
-      setSelectedPatientId(patient?.id || "");
+      setSelectedPatientId(
+        effectivePatient?.id || appointment?.patientId || ""
+      );
     },
     onError: (error: any) => {
       if (isUnauthorizedError(error)) {
@@ -265,7 +352,7 @@ export default function ScheduleConsultationModal({
     setIsOpen(false);
     onOpenChange?.(false);
     form.reset();
-    setSelectedPatientId(patient?.id || "");
+    setSelectedPatientId(effectivePatient?.id || appointment?.patientId || "");
   };
 
   // Check if user can schedule based on role and patient status
@@ -285,20 +372,25 @@ export default function ScheduleConsultationModal({
 
   // When showPatients is true, we need a patient selected
   // When showPatients is false, we need the patient prop
+  // If editing an appointment, always show the modal
   if (showPatients) {
     // Modal should show, but validation happens in form
     // Don't return null, just show the form
-  } else if (!patient || !canSchedule(patient)) {
+  } else if (isEditingAppointment) {
+    // When editing appointment, always show modal (even if patient is still loading)
+  } else if (!effectivePatient || !canSchedule(effectivePatient)) {
     return null;
   }
 
-  const isUpdateMode = selectedPatient
-    ? !!(
-        selectedPatient.consultationDate &&
-        selectedPatient.consultationTime &&
-        selectedPatient.consultationLocation
-      )
-    : false;
+  const isUpdateMode =
+    isEditingAppointment ||
+    (selectedPatient
+      ? !!(
+          selectedPatient.consultationDate &&
+          selectedPatient.consultationTime &&
+          selectedPatient.consultationLocation
+        )
+      : false);
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -308,9 +400,16 @@ export default function ScheduleConsultationModal({
       >
         <DialogHeader>
           <DialogTitle data-testid="title-schedule-consultation">
-            {isUpdateMode ? "Update" : "Schedule"} Consultation
-            {selectedPatient &&
-              ` for ${selectedPatient.firstName} ${selectedPatient.lastName}`}
+            {isEditingAppointment
+              ? "Edit"
+              : isUpdateMode
+              ? "Update"
+              : "Schedule"}{" "}
+            {isEditingAppointment ? "Appointment" : "Consultation"}
+            {(selectedPatient || effectivePatient) &&
+              ` for ${(selectedPatient || effectivePatient)?.firstName} ${
+                (selectedPatient || effectivePatient)?.lastName
+              }`}
           </DialogTitle>
         </DialogHeader>
 
@@ -359,11 +458,19 @@ export default function ScheduleConsultationModal({
                 control={form.control}
                 name="consultationDate"
                 render={({ field }) => {
-                  const today = new Date().toISOString().split("T")[0];
+                  // Helper function to format date in local timezone (YYYY-MM-DD)
+                  const formatDateLocal = (date: Date): string => {
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, "0");
+                    const day = String(date.getDate()).padStart(2, "0");
+                    return `${year}-${month}-${day}`;
+                  };
+
+                  const today = formatDateLocal(new Date());
                   const fieldValue = field.value
                     ? field.value instanceof Date
-                      ? field.value.toISOString().split("T")[0]
-                      : new Date(field.value).toISOString().split("T")[0]
+                      ? formatDateLocal(field.value)
+                      : formatDateLocal(new Date(field.value))
                     : "";
 
                   return (

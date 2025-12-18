@@ -239,8 +239,8 @@ export default function Settings() {
                     onClick={handleEditProfile}
                     data-testid="button-edit-profile"
                   >
-                    <Edit2 className="w-4 h-4 mr-2" />
-                    Edit Profile
+                    <Edit2 className="w-4 h-4" />
+                    <span className="hidden sm:inline">Edit Profile</span>
                   </Button>
                 </div>
               </CardHeader>

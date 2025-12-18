@@ -93,7 +93,7 @@ export default function Schedule() {
               }}
             >
               <CalendarPlus className="w-4 h-4 mr-2" />
-              Schedule Appointment
+              {window.innerWidth < 768 ? "Schedule" : "Schedule Appointment"}
             </Button>
           </div>
 
@@ -177,34 +177,18 @@ export default function Schedule() {
         open={isScheduleModalOpen}
         onOpenChange={handleCloseModal}
         showPatients={!editingAppointment}
+        appointment={editingAppointment || undefined}
         patient={
           editingPatient
             ? (() => {
-                const scheduledDate = editingAppointment?.scheduledAt
-                  ? new Date(editingAppointment.scheduledAt)
-                  : null;
-
-                // Format time as HH:MM
-                const formatTime = (date: Date) => {
-                  const hours = date.getHours().toString().padStart(2, "0");
-                  const minutes = date.getMinutes().toString().padStart(2, "0");
-                  return `${hours}:${minutes}`;
-                };
-
                 return {
                   id: editingPatient.id,
                   firstName: editingPatient.firstName,
                   lastName: editingPatient.lastName,
                   status: editingPatient.status,
-                  consultationDate: scheduledDate
-                    ? scheduledDate.toISOString().split("T")[0]
-                    : editingPatient.consultationDate,
-                  consultationTime: scheduledDate
-                    ? formatTime(scheduledDate)
-                    : editingPatient.consultationTime,
-                  consultationLocation:
-                    editingAppointment?.notes ||
-                    editingPatient.consultationLocation,
+                  consultationDate: editingPatient.consultationDate,
+                  consultationTime: editingPatient.consultationTime,
+                  consultationLocation: editingPatient.consultationLocation,
                 };
               })()
             : undefined

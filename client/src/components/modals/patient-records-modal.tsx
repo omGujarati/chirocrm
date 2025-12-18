@@ -3,10 +3,14 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -23,6 +27,8 @@ import {
   InfoIcon,
   TrashIcon,
   XIcon,
+  CheckCircleIcon,
+  AlertCircleIcon,
 } from "lucide-react";
 
 interface PatientRecord {
@@ -44,6 +50,7 @@ interface PatientRecordsModalProps {
   onClose: () => void;
   patientId: string;
   patientName: string;
+  patientStatus?: string;
 }
 
 export default function PatientRecordsModal({
@@ -51,9 +58,30 @@ export default function PatientRecordsModal({
   onClose,
   patientId,
   patientName,
+  patientStatus,
 }: PatientRecordsModalProps) {
   const { toast } = useToast();
   const { user } = useAuth();
+
+  // Helper function to check if status is treatment_completed or later
+  const isTreatmentCompletedOrLater = (status?: string): boolean => {
+    if (!status) return false;
+    const statusOrder = [
+      "pending_consent",
+      "consent_sent",
+      "consent_signed",
+      "schedulable",
+      "treatment_completed",
+      "pending_records",
+      "records_forwarded",
+      "records_verified",
+      "case_closed",
+      "dropped",
+    ];
+    const statusIndex = statusOrder.indexOf(status);
+    const treatmentCompletedIndex = statusOrder.indexOf("treatment_completed");
+    return statusIndex >= treatmentCompletedIndex && status !== "dropped";
+  };
   const [previewRecord, setPreviewRecord] = useState<PatientRecord | null>(
     null
   );
@@ -61,10 +89,35 @@ export default function PatientRecordsModal({
   const [previewApiUrl, setPreviewApiUrl] = useState<string | null>(null);
   const [previewToken, setPreviewToken] = useState<string | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
+  const [correctionMessage, setCorrectionMessage] = useState("");
 
   const { data: records = [], isLoading } = useQuery<PatientRecord[]>({
     queryKey: ["/api/patients", patientId, "records"],
     enabled: isOpen && !!patientId,
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/patients/${patientId}/records`
+      );
+      return response.json();
+    },
+  });
+
+  // Check forward status for showing/hiding buttons
+  const { data: forwardStatus } = useQuery<{
+    hasNewRecords: boolean;
+    shouldShowAdminButtons: boolean;
+  }>({
+    queryKey: ["/api/patients", patientId, "records", "forward-status"],
+    enabled: isOpen && !!patientId,
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/patients/${patientId}/records/forward-status`
+      );
+      return response.json();
+    },
   });
 
   const deleteMutation = useMutation({
@@ -91,6 +144,84 @@ export default function PatientRecordsModal({
       });
     },
   });
+
+  const verifyMutation = useMutation({
+    mutationFn: async (note?: string) => {
+      return apiRequest("POST", `/api/patients/${patientId}/records/verify`, {
+        note,
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Success",
+        description: "Records verified successfully",
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patientId, "records"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patientId, "records", "forward-status"],
+      });
+      onClose();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to verify records",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const sendForCorrectionMutation = useMutation({
+    mutationFn: async (note: string) => {
+      return apiRequest(
+        "POST",
+        `/api/patients/${patientId}/records/send-for-correction`,
+        { note }
+      );
+    },
+    onSuccess: () => {
+      toast({
+        title: "Success",
+        description: "Records sent for correction",
+      });
+      setIsCorrectionModalOpen(false);
+      setCorrectionMessage("");
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patientId, "records"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patientId, "records", "forward-status"],
+      });
+      onClose();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send records for correction",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSendForCorrection = () => {
+    if (!correctionMessage.trim()) {
+      toast({
+        title: "Error",
+        description: "Please provide a correction message",
+        variant: "destructive",
+      });
+      return;
+    }
+    sendForCorrectionMutation.mutate(correctionMessage.trim());
+  };
 
   const formatFileSize = (bytes?: number) => {
     if (!bytes) return "Unknown size";
@@ -329,6 +460,11 @@ export default function PatientRecordsModal({
           <p className="text-sm text-muted-foreground">
             Medical records for {patientName}
           </p>
+          {patientStatus === "case_closed" && user?.role === "staff" && (
+            <p className="text-xs text-orange-600 mt-1">
+              Case is closed. Showing only records you uploaded.
+            </p>
+          )}
         </DialogHeader>
 
         <div className="space-y-4">
@@ -340,7 +476,11 @@ export default function PatientRecordsModal({
           ) : records.length === 0 ? (
             <div className="flex flex-col items-center justify-center text-center py-8">
               <FolderOpenIcon className="w-10 h-10 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No records uploaded yet</p>
+              <p className="text-muted-foreground">
+                {patientStatus === "case_closed" && user?.role === "staff"
+                  ? "No records uploaded by you"
+                  : "No records uploaded yet"}
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -390,23 +530,24 @@ export default function PatientRecordsModal({
 
                       {/* Action buttons - flex-shrink-0 to prevent squishing */}
                       <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
-                        {isPreviewable(record.mimeType) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handlePreview(record)}
-                            title="Preview"
-                            className="h-8 w-8 p-0 sm:h-9 sm:w-9"
-                            disabled={isLoadingPreview}
-                            data-testid={`button-preview-${record.id}`}
-                          >
-                            {isLoadingPreview ? (
-                              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <EyeIcon className="w-4 h-4" />
-                            )}
-                          </Button>
-                        )}
+                        {isPreviewable(record.mimeType) &&
+                          isTreatmentCompletedOrLater(patientStatus) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handlePreview(record)}
+                              title="Preview"
+                              className="h-8 w-8 p-0 sm:h-9 sm:w-9"
+                              disabled={isLoadingPreview}
+                              data-testid={`button-preview-${record.id}`}
+                            >
+                              {isLoadingPreview ? (
+                                <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                <EyeIcon className="w-4 h-4" />
+                              )}
+                            </Button>
+                          )}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -454,6 +595,43 @@ export default function PatientRecordsModal({
               </div>
             </div>
           </div>
+
+          {/* Admin: Verify or Send for Correction buttons */}
+          {user?.role === "admin" &&
+            forwardStatus?.shouldShowAdminButtons &&
+            records.length > 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button
+                    onClick={() => verifyMutation.mutate(undefined)}
+                    disabled={
+                      verifyMutation.isPending ||
+                      sendForCorrectionMutation.isPending
+                    }
+                    className="flex-1 bg-green-600 hover:bg-green-700"
+                    data-testid="button-verify-records"
+                  >
+                    <CheckCircleIcon className="w-4 h-4 mr-2" />
+                    {verifyMutation.isPending
+                      ? "Verifying..."
+                      : "Verify Records"}
+                  </Button>
+                  <Button
+                    onClick={() => setIsCorrectionModalOpen(true)}
+                    disabled={
+                      verifyMutation.isPending ||
+                      sendForCorrectionMutation.isPending
+                    }
+                    variant="outline"
+                    className="flex-1 border-orange-300 text-orange-700 hover:bg-orange-50 hover:text-orange-700"
+                    data-testid="button-send-for-correction"
+                  >
+                    <AlertCircleIcon className="w-4 h-4 mr-2" />
+                    Send for Correction
+                  </Button>
+                </div>
+              </div>
+            )}
 
           <div className="flex justify-end pt-4">
             <Button
@@ -573,6 +751,59 @@ export default function PatientRecordsModal({
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Correction Message Modal */}
+      <Dialog
+        open={isCorrectionModalOpen}
+        onOpenChange={setIsCorrectionModalOpen}
+      >
+        <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-lg max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0">
+          <DialogHeader>
+            <DialogTitle>Send Records for Correction</DialogTitle>
+            <DialogDescription>
+              Please provide a detailed message explaining what needs to be
+              corrected. This message will be added as a legal note and visible
+              to staff.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="correction-message">Correction Message *</Label>
+              <Textarea
+                id="correction-message"
+                placeholder="Enter the correction details here..."
+                value={correctionMessage}
+                onChange={(e) => setCorrectionMessage(e.target.value)}
+                rows={6}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsCorrectionModalOpen(false);
+                setCorrectionMessage("");
+              }}
+              disabled={sendForCorrectionMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSendForCorrection}
+              disabled={
+                !correctionMessage.trim() || sendForCorrectionMutation.isPending
+              }
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              {sendForCorrectionMutation.isPending
+                ? "Sending..."
+                : "Send for Correction"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

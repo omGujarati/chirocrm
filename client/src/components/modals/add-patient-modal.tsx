@@ -38,21 +38,16 @@ interface AddPatientModalProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-const formSchema = insertPatientSchema
-  .omit({
-    createdBy: true, // This will be set automatically by the backend based on authenticated user
-    assignedAttorney: true, // This will be set automatically to the creator by the backend
-  })
-  .extend({
-    firstName: z.string().min(1, "First name is required"),
-    lastName: z.string().min(1, "Last name is required"),
-    email: z.string().email("Valid email is required"),
-  });
+const formSchema = insertPatientSchema.omit({
+  createdBy: true, // This will be set automatically by the backend based on authenticated user
+  assignedAttorney: true, // This will be set automatically to the creator by the backend
+}).extend({
+  firstName: z.string().min(1, "First name is required"),
+  lastName: z.string().min(1, "Last name is required"),
+  email: z.string().email("Valid email is required"),
+});
 
-export default function AddPatientModal({
-  open,
-  onOpenChange,
-}: AddPatientModalProps) {
+export default function AddPatientModal({ open, onOpenChange }: AddPatientModalProps) {
   const [isOpen, setIsOpen] = useState(open || false);
   const { toast } = useToast();
   const { user } = useAuth();
@@ -75,7 +70,7 @@ export default function AddPatientModal({
   const createPatientMutation = useMutation({
     mutationFn: async (data: z.infer<typeof formSchema>) => {
       // PHI removed from console logs for HIPAA compliance
-      if (import.meta.env.MODE === "development") {
+      if (import.meta.env.MODE === 'development') {
         console.log("Patient creation mutation initiated");
       }
       await apiRequest("POST", "/api/patients", data);
@@ -99,7 +94,7 @@ export default function AddPatientModal({
         });
         return;
       }
-
+      
       // Show specific server error message
       let errorMessage = "Failed to add patient";
       if (error.message?.includes("duplicate key")) {
@@ -107,7 +102,7 @@ export default function AddPatientModal({
       } else if (error.message) {
         errorMessage = error.message;
       }
-
+      
       toast({
         title: "Error",
         description: errorMessage,
@@ -124,7 +119,7 @@ export default function AddPatientModal({
 
   const onSubmit = (data: z.infer<typeof formSchema>) => {
     // PHI removed from console logs for HIPAA compliance
-    if (import.meta.env.MODE === "development") {
+    if (import.meta.env.MODE === 'development') {
       console.log("Form submission attempted");
       console.log("Form validation errors:", form.formState.errors);
     }
@@ -138,9 +133,8 @@ export default function AddPatientModal({
       onOpenChange?.(true);
     };
 
-    window.addEventListener("openAddPatientModal", handleOpenModal);
-    return () =>
-      window.removeEventListener("openAddPatientModal", handleOpenModal);
+    window.addEventListener('openAddPatientModal', handleOpenModal);
+    return () => window.removeEventListener('openAddPatientModal', handleOpenModal);
   }, [onOpenChange]);
 
   // Update internal state when prop changes
@@ -152,14 +146,11 @@ export default function AddPatientModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent
-        className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-lg max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0"
-        data-testid="modal-add-patient"
-      >
+      <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-lg max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0" data-testid="modal-add-patient">
         <DialogHeader>
           <DialogTitle>Add New Patient</DialogTitle>
         </DialogHeader>
-
+        
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -170,9 +161,9 @@ export default function AddPatientModal({
                   <FormItem>
                     <FormLabel>First Name *</FormLabel>
                     <FormControl>
-                      <Input
-                        placeholder="Enter first name"
-                        {...field}
+                      <Input 
+                        placeholder="Enter first name" 
+                        {...field} 
                         onChange={(e) => {
                           field.onChange(
                             e.target.value.charAt(0).toUpperCase() +
@@ -186,7 +177,7 @@ export default function AddPatientModal({
                   </FormItem>
                 )}
               />
-
+              
               <FormField
                 control={form.control}
                 name="lastName"
@@ -194,8 +185,8 @@ export default function AddPatientModal({
                   <FormItem>
                     <FormLabel>Last Name *</FormLabel>
                     <FormControl>
-                      <Input
-                        placeholder="Enter last name"
+                      <Input 
+                        placeholder="Enter last name" 
                         {...field}
                         onChange={(e) => {
                           field.onChange(
@@ -211,7 +202,7 @@ export default function AddPatientModal({
                 )}
               />
             </div>
-
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
@@ -220,10 +211,10 @@ export default function AddPatientModal({
                   <FormItem>
                     <FormLabel>Email *</FormLabel>
                     <FormControl>
-                      <Input
+                      <Input 
                         type="email"
-                        placeholder="patient@email.com"
-                        {...field}
+                        placeholder="patient@email.com" 
+                        {...field} 
                         data-testid="input-email"
                       />
                     </FormControl>
@@ -231,7 +222,7 @@ export default function AddPatientModal({
                   </FormItem>
                 )}
               />
-
+              
               <FormField
                 control={form.control}
                 name="phone"
@@ -239,10 +230,10 @@ export default function AddPatientModal({
                   <FormItem>
                     <FormLabel>Phone</FormLabel>
                     <FormControl>
-                      <Input
+                      <Input 
                         type="tel"
-                        placeholder="+1 (555) 123-4567"
-                        {...field}
+                        placeholder="+1 (555) 123-4567" 
+                        {...field} 
                         value={field.value || ""}
                         data-testid="input-phone"
                       />
@@ -252,7 +243,7 @@ export default function AddPatientModal({
                 )}
               />
             </div>
-
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
@@ -261,19 +252,13 @@ export default function AddPatientModal({
                   <FormItem>
                     <FormLabel>Date of Birth</FormLabel>
                     <FormControl>
-                      <Input
-                        type="date"
-                        {...field}
-                        value={
-                          field.value
-                            ? new Date(field.value).toISOString().split("T")[0]
-                            : ""
-                        }
-                        max={new Date().toISOString().split("T")[0]}
+                      <Input 
+                        type="date" 
+                        {...field} 
+                        value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
+                        max={new Date().toISOString().split('T')[0]}
                         onChange={(e) => {
-                          const date = e.target.value
-                            ? new Date(e.target.value)
-                            : undefined;
+                          const date = e.target.value ? new Date(e.target.value) : undefined;
                           field.onChange(date);
                         }}
                         data-testid="input-date-of-birth"
@@ -283,7 +268,7 @@ export default function AddPatientModal({
                   </FormItem>
                 )}
               />
-
+              
               <FormField
                 control={form.control}
                 name="dateOfInjury"
@@ -291,19 +276,13 @@ export default function AddPatientModal({
                   <FormItem>
                     <FormLabel>Date of Injury</FormLabel>
                     <FormControl>
-                      <Input
-                        type="date"
-                        {...field}
-                        value={
-                          field.value
-                            ? new Date(field.value).toISOString().split("T")[0]
-                            : ""
-                        }
-                        max={new Date().toISOString().split("T")[0]}
+                      <Input 
+                        type="date" 
+                        {...field} 
+                        value={field.value ? new Date(field.value).toISOString().split('T')[0] : ''}
+                        max={new Date().toISOString().split('T')[0]}
                         onChange={(e) => {
-                          const date = e.target.value
-                            ? new Date(e.target.value)
-                            : undefined;
+                          const date = e.target.value ? new Date(e.target.value) : undefined;
                           field.onChange(date);
                         }}
                         data-testid="input-date-of-injury"
@@ -314,7 +293,7 @@ export default function AddPatientModal({
                 )}
               />
             </div>
-
+            
             <FormField
               control={form.control}
               name="address"
@@ -322,10 +301,10 @@ export default function AddPatientModal({
                 <FormItem>
                   <FormLabel>Address</FormLabel>
                   <FormControl>
-                    <Textarea
+                    <Textarea 
                       rows={3}
-                      placeholder="Enter patient address"
-                      {...field}
+                      placeholder="Enter patient address" 
+                      {...field} 
                       value={field.value || ""}
                       data-testid="input-address"
                     />
@@ -334,30 +313,23 @@ export default function AddPatientModal({
                 </FormItem>
               )}
             />
-
+            
             <FormField
               control={form.control}
               name="status"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Initial Status</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    defaultValue={field.value}
-                  >
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
                     <FormControl>
                       <SelectTrigger data-testid="select-initial-status">
                         <SelectValue placeholder="Select initial status" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="pending_consent">
-                        Pending Consent
-                      </SelectItem>
+                      <SelectItem value="pending_consent">Pending Consent</SelectItem>
                       <SelectItem value="consent_sent">Consent Sent</SelectItem>
-                      <SelectItem value="consent_signed">
-                        Consent Signed
-                      </SelectItem>
+                      <SelectItem value="consent_signed">Consent Signed</SelectItem>
                       <SelectItem value="schedulable">Schedulable</SelectItem>
                     </SelectContent>
                   </Select>
@@ -365,22 +337,22 @@ export default function AddPatientModal({
                 </FormItem>
               )}
             />
-
+            
             <div className="flex items-center justify-end space-x-4 pt-4">
-              <Button
-                type="button"
-                variant="outline"
+              <Button 
+                type="button" 
+                variant="outline" 
                 onClick={handleClose}
                 data-testid="button-cancel-add-patient"
               >
                 Cancel
               </Button>
-              <Button
-                type="submit"
+              <Button 
+                type="submit" 
                 disabled={createPatientMutation.isPending}
                 onClick={(e) => {
                   // PHI removed from console logs for HIPAA compliance
-                  if (import.meta.env.MODE === "development") {
+                  if (import.meta.env.MODE === 'development') {
                     console.log("Submit button clicked");
                     console.log("Form valid?", form.formState.isValid);
                   }

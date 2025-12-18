@@ -43,6 +43,8 @@ export const patientStatusEnum = pgEnum("patient_status", [
   "treatment_completed",
   "pending_records",
   "records_forwarded",
+  "records_verified",
+  "case_closed",
   "dropped",
 ]);
 
@@ -80,6 +82,25 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Temporary OTP table for password reset
+export const tempOtps = pgTable(
+  "temp_otps",
+  {
+    id: varchar("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    email: varchar("email").notNull(),
+    otpHash: varchar("otp_hash").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    consumedAt: timestamp("consumed_at"),
+  },
+  (table) => [
+    index("IDX_temp_otps_email_created_at").on(table.email, table.createdAt),
+    index("IDX_temp_otps_email_expires_at").on(table.email, table.expiresAt),
+  ]
+);
 
 // Patients table
 export const patients = pgTable("patients", {
@@ -198,6 +219,33 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Patient history logs table (product-facing timeline inside Patient Details)
+// Stores patient-wise events (created, status changes, docusign events, notes changes, record actions, etc.)
+export const patientHistoryLogs = pgTable(
+  "patient_history_logs",
+  {
+    id: varchar("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    patientId: varchar("patient_id")
+      .notNull()
+      .references(() => patients.id),
+    actorUserId: varchar("actor_user_id").references(() => users.id), // nullable for system/webhook events if needed
+    eventType: varchar("event_type").notNull(), // patient_created, status_changed, consent_sent, consent_signed, note_added, record_uploaded, etc.
+    title: varchar("title").notNull(), // short label for UI
+    message: text("message"), // human-readable description (optional)
+    metadata: jsonb("metadata"), // structured context (ids, old/new status, envelopeId, etc.)
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [
+    index("IDX_patient_history_patient_created_at").on(
+      table.patientId,
+      table.createdAt
+    ),
+    index("IDX_patient_history_event_type").on(table.eventType),
+  ]
+);
+
 // Alerts table for automated notifications
 export const alerts = pgTable("alerts", {
   id: varchar("id")
@@ -244,6 +292,7 @@ export const usersRelations = relations(users, ({ many }) => ({
     relationName: "AppointmentCreatedBy",
   }),
   auditLogs: many(auditLogs),
+  patientHistoryLogs: many(patientHistoryLogs),
   alerts: many(alerts),
   createdPatientNotes: many(patientNotes, {
     relationName: "PatientNoteCreatedBy",
@@ -267,6 +316,7 @@ export const patientsRelations = relations(patients, ({ one, many }) => ({
   tasks: many(tasks),
   appointments: many(appointments),
   auditLogs: many(auditLogs),
+  patientHistoryLogs: many(patientHistoryLogs),
   alerts: many(alerts),
   patientNotes: many(patientNotes),
   patientRecords: many(patientRecords),
@@ -316,6 +366,20 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
     references: [patients.id],
   }),
 }));
+
+export const patientHistoryLogsRelations = relations(
+  patientHistoryLogs,
+  ({ one }) => ({
+    actor: one(users, {
+      fields: [patientHistoryLogs.actorUserId],
+      references: [users.id],
+    }),
+    patient: one(patients, {
+      fields: [patientHistoryLogs.patientId],
+      references: [patients.id],
+    }),
+  })
+);
 
 export const alertsRelations = relations(alerts, ({ one }) => ({
   patient: one(patients, {
@@ -404,6 +468,13 @@ export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
   createdAt: true,
 });
 
+export const insertPatientHistoryLogSchema = createInsertSchema(
+  patientHistoryLogs
+).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertAlertSchema = createInsertSchema(alerts).omit({
   id: true,
   createdAt: true,
@@ -449,6 +520,10 @@ export type Appointment = typeof appointments.$inferSelect;
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type PatientHistoryLog = typeof patientHistoryLogs.$inferSelect;
+export type InsertPatientHistoryLog = z.infer<
+  typeof insertPatientHistoryLogSchema
+>;
 export type Alert = typeof alerts.$inferSelect;
 export type InsertAlert = z.infer<typeof insertAlertSchema>;
 export type PatientNote = typeof patientNotes.$inferSelect;

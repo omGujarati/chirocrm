@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,49 @@ export default function UploadRecordsModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [description, setDescription] = useState("");
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep client-side validation aligned with server-side multer fileFilter/limits
+  const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+  const ALLOWED_EXTENSIONS = new Set([
+    "pdf",
+    "doc",
+    "docx",
+    "jpg",
+    "jpeg",
+    "png",
+    "tif",
+    "tiff",
+  ]);
+  const ALLOWED_MIME_TYPES = new Set([
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "image/jpeg",
+    "image/png",
+    "image/tiff",
+  ]);
+
+  const resetFileInput = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const validateSelectedFile = (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    const sizeOk = file.size <= MAX_FILE_SIZE_BYTES;
+    const extOk = ALLOWED_EXTENSIONS.has(ext);
+    // Some browsers may provide an empty mimetype; accept based on extension in that case
+    const mimeOk = file.type ? ALLOWED_MIME_TYPES.has(file.type) : true;
+
+    if (!extOk || !mimeOk) {
+      return `Invalid file type. Only PDF, DOC, DOCX, JPG/JPEG, PNG, and TIFF files are allowed.`;
+    }
+    if (!sizeOk) {
+      return `File is too large. Maximum size is 50MB.`;
+    }
+    return null;
+  };
 
   const uploadMutation = useMutation({
     mutationFn: async (formData: FormData) => {
@@ -72,6 +115,16 @@ export default function UploadRecordsModal({
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const errorMessage = validateSelectedFile(file);
+      if (errorMessage) {
+        toast({
+          title: "Invalid file",
+          description: errorMessage,
+          variant: "destructive",
+        });
+        resetFileInput();
+        return;
+      }
       setSelectedFile(file);
     }
   };
@@ -86,6 +139,17 @@ export default function UploadRecordsModal({
       return;
     }
 
+    const errorMessage = validateSelectedFile(selectedFile);
+    if (errorMessage) {
+      toast({
+        title: "Invalid file",
+        description: errorMessage,
+        variant: "destructive",
+      });
+      resetFileInput();
+      return;
+    }
+
     // Create FormData for secure file upload
     const formData = new FormData();
     formData.append("file", selectedFile);
@@ -97,7 +161,7 @@ export default function UploadRecordsModal({
   };
 
   const handleClose = () => {
-    setSelectedFile(null);
+    resetFileInput();
     setDescription("");
     onClose();
   };
@@ -123,6 +187,7 @@ export default function UploadRecordsModal({
               type="file"
               onChange={handleFileSelect}
               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.tiff"
+              ref={fileInputRef}
               data-testid="input-file-upload"
             />
             {selectedFile && (

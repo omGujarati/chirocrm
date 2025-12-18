@@ -8,11 +8,11 @@ import {
   ClipboardList,
   Calendar,
   FileSignature,
-  History,
   Settings,
   LogOut,
   Heart,
   X,
+  UserRound,
 } from "lucide-react";
 import { useEffect } from "react";
 
@@ -25,15 +25,12 @@ export default function Sidebar() {
     ...(user?.role === "admin"
       ? [{ name: "Dashboard", href: "/", icon: LayoutDashboard }]
       : []),
-    ...(user?.role === "admin"
-      ? [{ name: "Users", href: "/users", icon: Users }]
-      : []),
-    { name: "Patients", href: "/patients", icon: Users },
+    { name: "Patients", href: "/patients", icon: UserRound },
     { name: "Tasks", href: "/tasks", icon: ClipboardList },
     { name: "Schedule", href: "/schedule", icon: Calendar },
     { name: "Consent Forms", href: "/consent-forms", icon: FileSignature },
     ...(user?.role === "admin"
-      ? [{ name: "Audit Logs", href: "/audit-logs", icon: History }]
+      ? [{ name: "Users", href: "/users", icon: Users }]
       : []),
     { name: "Settings", href: "/settings", icon: Settings },
   ];

@@ -59,10 +59,10 @@ import {
   CheckCircleIcon,
   CalendarCheckIcon,
   ShareIcon,
-  UserIcon,
   FileTextIcon,
-  MailIcon,
   FileCheckIcon,
+  Share2,
+  UserCheck2,
 } from "lucide-react";
 
 interface PaginatedPatientsResponse {
@@ -73,6 +73,99 @@ interface PaginatedPatientsResponse {
     total: number;
     totalPages: number;
   };
+}
+
+// Component to handle forward records button with status check
+function ForwardRecordsButton({
+  patientId,
+  recordsCount,
+  onForward,
+  isPending,
+}: {
+  patientId: string;
+  recordsCount: number;
+  onForward: () => void;
+  isPending: boolean;
+}) {
+  const { data: forwardStatus } = useQuery<{
+    hasNewRecords: boolean;
+    shouldShowAdminButtons: boolean;
+  }>({
+    queryKey: ["/api/patients", patientId, "records", "forward-status"],
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/patients/${patientId}/records/forward-status`
+      );
+      return response.json();
+    },
+  });
+
+  // Show button if there are records and there are new records to forward
+  if (recordsCount === 0 || !forwardStatus?.hasNewRecords) {
+    return null;
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      title="Forward Records to Admin"
+      onClick={(e) => {
+        e.stopPropagation();
+        onForward();
+      }}
+      disabled={isPending}
+      data-testid={`button-forward-records-${patientId}`}
+    >
+      <Share2 size={14} />
+    </Button>
+  );
+}
+
+// Component for dropdown menu item
+function ForwardRecordsDropdownItem({
+  patientId,
+  recordsCount,
+  onForward,
+  isPending,
+}: {
+  patientId: string;
+  recordsCount: number;
+  onForward: () => void;
+  isPending: boolean;
+}) {
+  const { data: forwardStatus } = useQuery<{
+    hasNewRecords: boolean;
+    shouldShowAdminButtons: boolean;
+  }>({
+    queryKey: ["/api/patients", patientId, "records", "forward-status"],
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/patients/${patientId}/records/forward-status`
+      );
+      return response.json();
+    },
+  });
+
+  // Show menu item if there are records and there are new records to forward
+  if (recordsCount === 0 || !forwardStatus?.hasNewRecords) {
+    return null;
+  }
+
+  return (
+    <DropdownMenuItem
+      onClick={(e) => {
+        e.stopPropagation();
+        onForward();
+      }}
+      disabled={isPending}
+    >
+      <Share2 size={14} className="mr-2" />
+      Forward Records to Admin
+    </DropdownMenuItem>
+  );
 }
 
 export default function Patients() {
@@ -259,6 +352,114 @@ export default function Patients() {
     },
   });
 
+  const forwardRecordsToAdminMutation = useMutation({
+    mutationFn: async ({ patientId }: { patientId: string }) => {
+      const response = await apiRequest(
+        "POST",
+        `/api/patients/${patientId}/records/forward`,
+        { forwardToAdmins: true }
+      );
+      return { ...(await response.json()), patientId };
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      queryClient.invalidateQueries({
+        queryKey: [
+          "/api/patients",
+          data.patientId,
+          "records",
+          "forward-status",
+        ],
+      });
+      toast({
+        title: "Success",
+        description:
+          data.message || "Records forwarded to admin for verification",
+      });
+    },
+    onError: (error: any) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are not logged in",
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({
+        title: "Error",
+        description: error.message || "Failed to forward records",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const verifyRecordsMutation = useMutation({
+    mutationFn: async ({ patientId }: { patientId: string }) => {
+      const response = await apiRequest(
+        "POST",
+        `/api/patients/${patientId}/records/verify`,
+        {}
+      );
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      toast({
+        title: "Success",
+        description: data.message || "Records verified",
+      });
+    },
+    onError: (error: any) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are not logged in",
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({
+        title: "Error",
+        description: error.message || "Failed to verify records",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const closeCaseMutation = useMutation({
+    mutationFn: async ({ patientId }: { patientId: string }) => {
+      const response = await apiRequest(
+        "POST",
+        `/api/patients/${patientId}/close-case`,
+        {}
+      );
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/patients"] });
+      toast({
+        title: "Success",
+        description: data.message || "Case closed successfully",
+      });
+    },
+    onError: (error: any) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are not logged in",
+          variant: "destructive",
+        });
+        return;
+      }
+      toast({
+        title: "Error",
+        description: error.message || "Failed to close case",
+        variant: "destructive",
+      });
+    },
+  });
+
   const filteredPatients = (patients as any[]).filter((patient: any) => {
     const matchesSearch =
       searchTerm === "" ||
@@ -426,12 +627,12 @@ export default function Patients() {
         <div className="flex-1 overflow-auto p-4 sm:p-6 relative z-0">
           <div className="mb-6 flex flex-col gap-4">
             <div className="w-full flex flex-col sm:flex-row gap-4 items-stretch sm:items-center justify-between">
-              <div className="flex items-center gap-2 w-full">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full">
                 <Input
                   placeholder="Search patients..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="flex-1 sm:max-w-sm"
+                  className="w-full sm:flex-1 sm:max-w-sm"
                   data-testid="input-search-patients"
                 />
 
@@ -440,7 +641,7 @@ export default function Patients() {
                   onValueChange={handleStatusFilterChange}
                 >
                   <SelectTrigger
-                    className="w-full sm:max-w-xs"
+                    className="w-full sm:w-auto sm:max-w-xs"
                     data-testid="select-status-filter"
                   >
                     <SelectValue placeholder="Filter by status" />
@@ -464,6 +665,10 @@ export default function Patients() {
                     <SelectItem value="records_forwarded">
                       Records Forwarded
                     </SelectItem>
+                    <SelectItem value="records_verified">
+                      Records Verified
+                    </SelectItem>
+                    <SelectItem value="case_closed">Case Closed</SelectItem>
                     <SelectItem value="dropped">Dropped</SelectItem>
                   </SelectContent>
                 </Select>
@@ -475,7 +680,7 @@ export default function Patients() {
                   window.dispatchEvent(event);
                 }}
                 data-testid="button-add-patient"
-                className="w-full sm:w-auto justify-end"
+                className="w-full sm:w-fit  sm:justify-center md:justify-end"
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Add Patient
@@ -520,23 +725,60 @@ export default function Patients() {
                 <div className="space-y-4">
                   {filteredPatients.map((patient: any) => {
                     // Determine which actions are available
-                    const hasEdit = true;
+                    // For staff: if case is closed, hide all action buttons except view records and notes
+                    const isCaseClosed = patient.status === "case_closed";
+                    const isStaff = user?.role === "staff";
+                    const isCaseClosedForStaff = isCaseClosed && isStaff;
+
+                    const hasEdit = !isCaseClosedForStaff;
                     const hasConsent =
-                      patient.status === "pending_consent" ||
-                      (patient.status === "consent_sent" &&
-                        patient.consentLanguage);
+                      !isCaseClosedForStaff &&
+                      (patient.status === "pending_consent" ||
+                        (patient.status === "consent_sent" &&
+                          patient.consentLanguage));
                     const hasSchedule =
-                      patient.status === "consent_signed" ||
-                      patient.status === "schedulable";
-                    const hasView = true;
-                    const hasNotes = true;
+                      !isCaseClosedForStaff &&
+                      (patient.status === "consent_signed" ||
+                        patient.status === "schedulable");
+                    const hasView = true; // Always allow viewing
+                    const hasNotes = true; // Always allow viewing notes (but editing restricted in modal)
+                    // Helper function to check if status is treatment_completed or later
+                    const isTreatmentCompletedOrLater = (
+                      status: string
+                    ): boolean => {
+                      const statusOrder = [
+                        "pending_consent",
+                        "consent_sent",
+                        "consent_signed",
+                        "schedulable",
+                        "treatment_completed",
+                        "pending_records",
+                        "records_forwarded",
+                        "records_verified",
+                        "case_closed",
+                        "dropped",
+                      ];
+                      const statusIndex = statusOrder.indexOf(status);
+                      const treatmentCompletedIndex = statusOrder.indexOf(
+                        "treatment_completed"
+                      );
+                      return (
+                        statusIndex >= treatmentCompletedIndex &&
+                        status !== "dropped"
+                      );
+                    };
+
                     const hasUpload =
-                      user?.role === "staff" && patient.status !== "dropped";
+                      !isCaseClosedForStaff &&
+                      user?.role === "staff" &&
+                      isTreatmentCompletedOrLater(patient.status);
                     const hasRecords =
-                      user?.role === "staff" ||
+                      (user?.role === "staff" &&
+                        isTreatmentCompletedOrLater(patient.status)) ||
                       user?.role === "attorney" ||
                       user?.role === "admin";
                     const hasDrop =
+                      !isCaseClosedForStaff &&
                       (user?.role === "attorney" || user?.role === "staff") &&
                       patient.status !== "dropped";
                     const hasAdminOverride = user?.role === "admin";
@@ -729,9 +971,65 @@ export default function Patients() {
                                     <ShareIcon className="w-4 h-4 mr-2 text-indigo-500 cursor-pointer" />
                                     Records Forwarded
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      statusOverrideMutation.mutate({
+                                        patientId: patient.id,
+                                        status: "records_verified",
+                                      });
+                                    }}
+                                    disabled={
+                                      patient.status === "records_verified" ||
+                                      statusOverrideMutation.isPending
+                                    }
+                                  >
+                                    <FileCheckIcon className="w-4 h-4 mr-2 text-teal-500 cursor-pointer" />
+                                    Records Verified
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className="cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      statusOverrideMutation.mutate({
+                                        patientId: patient.id,
+                                        status: "case_closed",
+                                      });
+                                    }}
+                                    disabled={
+                                      patient.status === "case_closed" ||
+                                      statusOverrideMutation.isPending
+                                    }
+                                  >
+                                    <UserCheck2 className="w-4 h-4 mr-2 text-slate-500 cursor-pointer" />
+                                    Case Closed
+                                  </DropdownMenuItem>
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             )}
+                            {/* Admin: Close case button when status is records_verified */}
+                            {hasAdminOverride &&
+                              patient.status === "records_verified" && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  title="Close Case"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    closeCaseMutation.mutate({
+                                      patientId: patient.id,
+                                    });
+                                  }}
+                                  disabled={closeCaseMutation.isPending}
+                                  className="border-slate-300 text-slate-700 hover:bg-slate-50 hover:text-slate-700"
+                                  data-testid={`button-close-case-${patient.id}`}
+                                >
+                                  {closeCaseMutation.isPending
+                                    ? "Closing..."
+                                    : "Close Case"}
+                                </Button>
+                              )}
                           </div>
                           <span className="text-xs text-muted-foreground hidden sm:inline">
                             {new Date(patient.createdAt).toLocaleDateString()}
@@ -868,6 +1166,22 @@ export default function Patients() {
                               >
                                 <Upload size={14} />
                               </Button>
+                            )}
+
+                            {/* Staff: forward records to admin for verification */}
+                            {user?.role === "staff" && (
+                              <ForwardRecordsButton
+                                patientId={patient.id}
+                                recordsCount={patient.recordsCount ?? 0}
+                                onForward={() => {
+                                  forwardRecordsToAdminMutation.mutate({
+                                    patientId: patient.id,
+                                  });
+                                }}
+                                isPending={
+                                  forwardRecordsToAdminMutation.isPending
+                                }
+                              />
                             )}
 
                             {hasRecords && (
@@ -1030,6 +1344,20 @@ export default function Patients() {
                                   Upload Records
                                 </DropdownMenuItem>
                               )}
+                              {user?.role === "staff" && (
+                                <ForwardRecordsDropdownItem
+                                  patientId={patient.id}
+                                  recordsCount={patient.recordsCount ?? 0}
+                                  onForward={() => {
+                                    forwardRecordsToAdminMutation.mutate({
+                                      patientId: patient.id,
+                                    });
+                                  }}
+                                  isPending={
+                                    forwardRecordsToAdminMutation.isPending
+                                  }
+                                />
+                              )}
                               {hasRecords && (
                                 <DropdownMenuItem
                                   onClick={(e) => {
@@ -1164,6 +1492,7 @@ export default function Patients() {
             ? `${selectedPatientForRecords.firstName} ${selectedPatientForRecords.lastName}`
             : ""
         }
+        patientStatus={selectedPatientForRecords?.status}
       />
 
       <PatientNotesModal

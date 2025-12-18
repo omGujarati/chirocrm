@@ -18,6 +18,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs/promises";
 import crypto from "crypto";
+import { sendOtpEmail, sendAppointmentEmail } from "./services/sendgridMailer";
 import {
   uploadToS3,
   downloadFromS3,
@@ -251,6 +252,338 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error during registration:", error);
       res.status(500).json({ message: "Failed to register account" });
+    }
+  });
+
+  // Forgot password - request OTP (public, no auth required)
+  app.post("/api/auth/forgot-password/request", async (req: any, res) => {
+    const requestSchema = z.object({
+      email: z.string().email("Invalid email address"),
+    });
+
+    try {
+      // Best-effort cleanup on every request
+      await storage.cleanupExpiredTempOtps();
+
+      const parsed = requestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: parsed.error.issues,
+        });
+      }
+
+      const email = parsed.data.email.trim().toLowerCase();
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({
+          message: "Account not found. Please register.",
+          code: "ACCOUNT_NOT_FOUND",
+        });
+      }
+
+      // Rate limit: max 5 OTPs in 5 minutes per email
+      const windowMs = 5 * 60 * 1000;
+      const now = new Date();
+      const since = new Date(now.getTime() - windowMs);
+      const recentCount = await storage.countRecentTempOtpsByEmail(
+        email,
+        since
+      );
+      if (recentCount >= 5) {
+        return res.status(429).json({
+          message: "Too many OTP requests. Please try again in a few minutes.",
+          code: "OTP_RATE_LIMIT",
+          retryAfterSeconds: 5 * 60,
+        });
+      }
+
+      const otp = crypto.randomInt(100000, 1000000).toString(); // 6 digits
+      const otpSecret =
+        process.env.OTP_SECRET ||
+        process.env.SESSION_SECRET ||
+        "dev_otp_secret";
+      const otpHash = crypto
+        .createHash("sha256")
+        .update(`${email}:${otp}:${otpSecret}`)
+        .digest("hex");
+
+      const expiresInMinutes = 2;
+      const expiresAt = new Date(now.getTime() + expiresInMinutes * 60 * 1000);
+      await storage.createTempOtp({ email, otpHash, expiresAt });
+
+      await sendOtpEmail({ to: email, otp, expiresInMinutes });
+
+      return res.json({
+        message: "OTP sent to your email address.",
+        expiresInMinutes,
+        cooldownSeconds: 30,
+      });
+    } catch (error) {
+      console.error("Error requesting forgot-password OTP:", error);
+      return res.status(500).json({
+        message: "Failed to send OTP. Please try again.",
+        code: "OTP_SEND_FAILED",
+      });
+    }
+  });
+
+  function base64UrlEncode(input: string): string {
+    return Buffer.from(input, "utf8")
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+  }
+
+  function base64UrlDecode(input: string): string {
+    const padLength = (4 - (input.length % 4)) % 4;
+    const padded =
+      input.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat(padLength);
+    return Buffer.from(padded, "base64").toString("utf8");
+  }
+
+  function signResetToken(payload: { email: string; exp: number }): string {
+    const secret =
+      process.env.OTP_SECRET || process.env.SESSION_SECRET || "dev_otp_secret";
+    const json = JSON.stringify(payload);
+    const body = base64UrlEncode(json);
+    const sig = crypto
+      .createHmac("sha256", secret)
+      .update(body)
+      .digest("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+    return `${body}.${sig}`;
+  }
+
+  function verifyResetToken(token: string): { email: string } | null {
+    try {
+      const secret =
+        process.env.OTP_SECRET ||
+        process.env.SESSION_SECRET ||
+        "dev_otp_secret";
+      const [body, sig] = token.split(".");
+      if (!body || !sig) return null;
+      const expectedSig = crypto
+        .createHmac("sha256", secret)
+        .update(body)
+        .digest("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+      if (expectedSig !== sig) return null;
+      const payload = JSON.parse(base64UrlDecode(body)) as {
+        email?: string;
+        exp?: number;
+      };
+      if (!payload?.email || !payload?.exp) return null;
+      if (Date.now() > payload.exp) return null;
+      return { email: String(payload.email).trim().toLowerCase() };
+    } catch {
+      return null;
+    }
+  }
+
+  // Forgot password - verify OTP (public, no auth required)
+  app.post("/api/auth/forgot-password/verify", async (req: any, res) => {
+    const verifySchema = z.object({
+      email: z.string().email("Invalid email address"),
+      otp: z
+        .string()
+        .min(6, "OTP must be 6 digits")
+        .max(6, "OTP must be 6 digits")
+        .regex(/^\d{6}$/, "OTP must be 6 digits"),
+    });
+
+    try {
+      await storage.cleanupExpiredTempOtps();
+
+      const parsed = verifySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: parsed.error.issues,
+        });
+      }
+
+      const email = parsed.data.email.trim().toLowerCase();
+      const otp = parsed.data.otp;
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({
+          message: "Account not found. Please register.",
+          code: "ACCOUNT_NOT_FOUND",
+        });
+      }
+
+      const latestOtp = await storage.getLatestValidTempOtpByEmail(email);
+      if (!latestOtp) {
+        return res.status(400).json({
+          message: "OTP expired or not found. Please request a new OTP.",
+          code: "OTP_NOT_FOUND",
+        });
+      }
+
+      const otpSecret =
+        process.env.OTP_SECRET ||
+        process.env.SESSION_SECRET ||
+        "dev_otp_secret";
+      const providedHash = crypto
+        .createHash("sha256")
+        .update(`${email}:${otp}:${otpSecret}`)
+        .digest("hex");
+
+      if (providedHash !== latestOtp.otpHash) {
+        return res.status(400).json({
+          message: "Invalid OTP. Please try again.",
+          code: "OTP_INVALID",
+        });
+      }
+
+      // Consume OTP to prevent replay; reset flow continues with resetToken
+      await storage.consumeTempOtp(latestOtp.id);
+      await storage.deleteTempOtpsByEmail(email);
+
+      const tokenTtlMs = 15 * 60 * 1000; // 15 minutes
+      const resetToken = signResetToken({
+        email,
+        exp: Date.now() + tokenTtlMs,
+      });
+
+      return res.json({
+        message: "OTP verified.",
+        resetToken,
+        expiresInMinutes: 15,
+      });
+    } catch (error) {
+      console.error("Error verifying forgot-password OTP:", error);
+      return res.status(500).json({
+        message: "Failed to verify OTP. Please try again.",
+        code: "OTP_VERIFY_FAILED",
+      });
+    }
+  });
+
+  // Forgot password - reset password with OTP (public, no auth required)
+  app.post("/api/auth/forgot-password/reset", async (req: any, res) => {
+    const resetSchema = z
+      .object({
+        email: z.string().email("Invalid email address"),
+        // New flow: resetToken returned by /verify. Keep otp optional for backward compatibility.
+        resetToken: z.string().min(10).optional().nullable(),
+        otp: z
+          .string()
+          .min(6, "OTP must be 6 digits")
+          .max(6, "OTP must be 6 digits")
+          .regex(/^\d{6}$/, "OTP must be 6 digits")
+          .optional(),
+        newPassword: z
+          .string()
+          .min(8, "Password must be at least 8 characters"),
+        confirmPassword: z
+          .string()
+          .min(8, "Password must be at least 8 characters"),
+      })
+      .refine((data) => data.newPassword === data.confirmPassword, {
+        message: "Passwords do not match",
+        path: ["confirmPassword"],
+      });
+
+    try {
+      await storage.cleanupExpiredTempOtps();
+
+      const parsed = resetSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: parsed.error.issues,
+        });
+      }
+
+      const email = parsed.data.email.trim().toLowerCase();
+      const otp = parsed.data.otp;
+      const resetToken = parsed.data.resetToken
+        ? String(parsed.data.resetToken)
+        : null;
+      const newPassword = parsed.data.newPassword;
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({
+          message: "Account not found. Please register.",
+          code: "ACCOUNT_NOT_FOUND",
+        });
+      }
+
+      // Preferred: verify resetToken (OTP already verified on /verify)
+      if (resetToken) {
+        const verified = verifyResetToken(resetToken);
+        if (!verified || verified.email !== email) {
+          return res.status(400).json({
+            message:
+              "Verification expired or invalid. Please request a new OTP.",
+            code: "RESET_TOKEN_INVALID",
+          });
+        }
+      } else {
+        // Backward-compatible flow: verify OTP inline (old UI)
+        if (!otp) {
+          return res.status(400).json({
+            message: "OTP is required.",
+            code: "OTP_REQUIRED",
+          });
+        }
+
+        const latestOtp = await storage.getLatestValidTempOtpByEmail(email);
+        if (!latestOtp) {
+          return res.status(400).json({
+            message: "OTP expired or not found. Please request a new OTP.",
+            code: "OTP_NOT_FOUND",
+          });
+        }
+
+        const otpSecret =
+          process.env.OTP_SECRET ||
+          process.env.SESSION_SECRET ||
+          "dev_otp_secret";
+        const providedHash = crypto
+          .createHash("sha256")
+          .update(`${email}:${otp}:${otpSecret}`)
+          .digest("hex");
+
+        if (providedHash !== latestOtp.otpHash) {
+          return res.status(400).json({
+            message: "Invalid OTP. Please try again.",
+            code: "OTP_INVALID",
+          });
+        }
+
+        // Consume OTP first to prevent race / replay
+        await storage.consumeTempOtp(latestOtp.id);
+      }
+
+      // Update password hash
+      const bcrypt = await import("bcrypt");
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      await storage.updateUser(user.id, {
+        passwordHash,
+        mustChangePassword: false,
+      });
+
+      // Cleanup all OTPs for that email
+      await storage.deleteTempOtpsByEmail(email);
+
+      return res.json({ message: "Password updated successfully." });
+    } catch (error) {
+      console.error("Error resetting password with OTP:", error);
+      return res.status(500).json({
+        message: "Failed to reset password. Please try again.",
+        code: "PASSWORD_RESET_FAILED",
+      });
     }
   });
 
@@ -1072,6 +1405,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
+  // Centralized audit log helper for system-initiated actions (no req available)
+  // NOTE: userId is required due to FK constraint; prefer a real actor when possible.
+  const systemAuditLog = async (
+    userId: string,
+    action: string,
+    resourceType: string,
+    resourceId: string,
+    details?: any,
+    patientId?: string
+  ) => {
+    try {
+      await storage.createAuditLog({
+        userId,
+        action,
+        resourceType,
+        resourceId,
+        patientId,
+        details,
+      });
+    } catch (error) {
+      console.error("Failed to create system audit log:", error);
+    }
+  };
+
+  // Patient history helper (product-facing timeline inside Patient Details)
+  const patientHistoryLog = async (
+    req: any,
+    patientId: string,
+    eventType: string,
+    title: string,
+    message?: string,
+    metadata?: any
+  ) => {
+    try {
+      const authenticatedUser = req.user as AuthenticatedUser;
+      await storage.createPatientHistoryLog({
+        patientId,
+        actorUserId: authenticatedUser?.id ?? null,
+        eventType,
+        title,
+        message,
+        metadata,
+      });
+    } catch (error) {
+      console.error("Failed to create patient history log:", error);
+    }
+  };
+
+  // For system/webhook events where we don't have req/session
+  const systemPatientHistoryLog = async (
+    patientId: string,
+    actorUserId: string | null,
+    eventType: string,
+    title: string,
+    message?: string,
+    metadata?: any
+  ) => {
+    try {
+      await storage.createPatientHistoryLog({
+        patientId,
+        actorUserId,
+        eventType,
+        title,
+        message,
+        metadata,
+      });
+    } catch (error) {
+      console.error("Failed to create system patient history log:", error);
+    }
+  };
+
   // Update user details - Admin only
   app.put("/api/users/:id", authGuard, async (req: any, res) => {
     try {
@@ -1229,6 +1633,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Dashboard activity chart
+  app.get("/api/dashboard/activity", authGuard, async (req: any, res) => {
+    try {
+      const rangeParam = req.query.range;
+      const range =
+        rangeParam === "weekly" || rangeParam === "monthly"
+          ? rangeParam
+          : "monthly";
+      const compare = String(req.query.compare || "").toLowerCase();
+      const includeCompare =
+        compare === "1" || compare === "true" || compare === "yes";
+
+      if (includeCompare) {
+        const activity = await storage.getDashboardActivityWithCompare(range);
+        return res.json({
+          range,
+          data: activity.current,
+          previousData: activity.previous,
+        });
+      }
+
+      const activity = await storage.getDashboardActivity(range);
+      res.json({ range, data: activity });
+    } catch (error) {
+      console.error("Error fetching dashboard activity:", error);
+      res.status(500).json({ message: "Failed to fetch dashboard activity" });
+    }
+  });
+
   // Patient routes
   app.get("/api/patients", authGuard, async (req: any, res) => {
     try {
@@ -1348,6 +1781,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         hasEmail: !!patientData.email,
         status: patientData.status,
       });
+
+      await patientHistoryLog(
+        req,
+        patient.id,
+        "patient_created",
+        "Patient created",
+        `Patient created by ${user.firstName ?? ""} ${
+          user.lastName ?? ""
+        }`.trim(),
+        { createdBy: userId, initialStatus: patientData.status }
+      );
 
       // Create initial task to send consent form
       if (patient.status === "pending_consent") {
@@ -1520,6 +1964,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         "treatment_completed",
         "pending_records",
         "records_forwarded",
+        "records_verified",
+        "case_closed",
         "dropped",
       ];
 
@@ -1568,6 +2014,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         reason: "admin_manual_override",
         patientName: `${patient.firstName} ${patient.lastName}`,
       });
+
+      await patientHistoryLog(
+        req,
+        patientId,
+        "patient_status_changed",
+        "Status updated",
+        `Status changed from ${oldStatus} to ${status}`,
+        { oldStatus, newStatus: status, source: "admin_override" }
+      );
 
       res.json({
         message: `Patient status updated from ${oldStatus} to ${status}`,
@@ -1660,6 +2115,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         );
 
+        await patientHistoryLog(
+          req,
+          patientId,
+          "patient_assignment_changed",
+          "Assignment updated",
+          undefined,
+          {
+            oldAssignedAttorneyId: oldAssignment,
+            newAssignedAttorneyId: newAssignment,
+          }
+        );
+
+        // Notify newly assigned user (in-app alert)
+        // NOTE: Only notify the specific assignee (least privilege).
+        if (newAssignment && newAssignment !== oldAssignment) {
+          try {
+            const assignedUser = await storage.getUser(newAssignment);
+            if (assignedUser) {
+              const message = `You have been assigned a patient: ${patient.firstName} ${patient.lastName}`;
+              await storage.createAlert({
+                type: "patient_assigned",
+                patientId,
+                userId: newAssignment,
+                message,
+                scheduledFor: new Date(), // immediate
+              });
+            }
+          } catch (notificationError) {
+            // Don't fail the request if notification fails
+            console.error(
+              "Failed to create patient assignment notification:",
+              notificationError
+            );
+          }
+        }
+
         res.json({
           message: "Patient assignment updated successfully",
           patient: {
@@ -1747,6 +2238,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Patient not found" });
       }
 
+      // Check if case is closed - only admin can schedule appointments for closed cases
+      if (existingPatient.status === "case_closed" && user.role !== "admin") {
+        await auditLog(req, "schedule_denied", "patient", patientId, {
+          role: user.role,
+          reason: "case_closed",
+          status: existingPatient.status,
+        });
+        return res.status(403).json({
+          message:
+            "Cannot schedule appointment - case is closed. Only admin can perform this action.",
+        });
+      }
+
       // HIPAA compliance: Only admin, creator, or assigned attorney can schedule
       if (!canAccessPatient(user, existingPatient)) {
         await auditLog(req, "schedule_denied", "patient", patientId, {
@@ -1811,6 +2315,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             consultationDate.toDateString()
       );
 
+      const isReschedule = !!existingConsultationAppointment;
       let appointment;
       if (existingConsultationAppointment) {
         // Update existing appointment
@@ -1837,14 +2342,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // HIPAA-safe audit log
-      await auditLog(req, "consultation_scheduled", "patient", patient.id, {
-        role: user.role,
-        hasDate: !!consultationData.consultationDate,
-        hasTime: !!consultationData.consultationTime,
-        hasLocation: !!consultationData.consultationLocation,
-        scheduledBy: userId,
-        appointmentId: appointment.id,
-      });
+      await auditLog(
+        req,
+        isReschedule ? "consultation_rescheduled" : "consultation_scheduled",
+        "patient",
+        patient.id,
+        {
+          role: user.role,
+          hasDate: !!consultationData.consultationDate,
+          hasTime: !!consultationData.consultationTime,
+          hasLocation: !!consultationData.consultationLocation,
+          scheduledBy: userId,
+          appointmentId: appointment.id,
+          type: isReschedule ? "reschedule" : "new",
+        }
+      );
+
+      await patientHistoryLog(
+        req,
+        patient.id,
+        isReschedule ? "consultation_rescheduled" : "consultation_scheduled",
+        isReschedule ? "Consultation rescheduled" : "Consultation scheduled",
+        undefined,
+        {
+          appointmentId: appointment.id,
+          consultationDate: consultationData.consultationDate,
+          consultationTime: consultationData.consultationTime,
+          consultationLocation: consultationData.consultationLocation,
+        }
+      );
+
+      // Send appointment email to patient
+      if (patient.email) {
+        try {
+          const oldScheduledAt =
+            isReschedule && existingConsultationAppointment
+              ? new Date(existingConsultationAppointment.scheduledAt)
+              : undefined;
+
+          await sendAppointmentEmail({
+            to: patient.email,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            scheduledAt: consultationDate,
+            duration: appointment.duration || 60,
+            location: consultationData.consultationLocation || null,
+            isUpdate: isReschedule,
+            oldScheduledAt: oldScheduledAt,
+          });
+
+          // Log email sent in patient history
+          await patientHistoryLog(
+            req,
+            patient.id,
+            "appointment_email_sent",
+            isReschedule
+              ? "Appointment update email sent"
+              : "Appointment confirmation email sent",
+            `${isReschedule ? "Update" : "Confirmation"} email sent to ${
+              patient.email
+            }`,
+            {
+              appointmentId: appointment.id,
+              emailType: isReschedule ? "update" : "confirmation",
+            }
+          );
+        } catch (emailError) {
+          // Log error but don't fail the appointment scheduling
+          console.error("Error sending appointment email:", emailError);
+          // Still log that we attempted to send email
+          await patientHistoryLog(
+            req,
+            patient.id,
+            "appointment_email_failed",
+            "Appointment email failed to send",
+            `Failed to send ${
+              isReschedule ? "update" : "confirmation"
+            } email to ${patient.email}`,
+            {
+              appointmentId: appointment.id,
+              emailType: isReschedule ? "update" : "confirmation",
+              error: (emailError as Error).message,
+            }
+          );
+        }
+      }
 
       res.json({
         message: "Consultation scheduled successfully",
@@ -1938,6 +2519,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         previousStatus: patient.status,
       });
 
+      await patientHistoryLog(
+        req,
+        patientId,
+        "case_dropped",
+        "Case dropped",
+        dropReason.trim(),
+        { previousStatus: patient.status }
+      );
+
       res.json({
         message: "Patient dropped successfully",
         patient: droppedPatient,
@@ -1976,6 +2566,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const patient = await storage.getPatient(patientId);
         if (!patient) {
           return res.status(404).json({ message: "Patient not found" });
+        }
+
+        // Check if case is closed - only admin can send emails for closed cases
+        if (patient.status === "case_closed" && user.role !== "admin") {
+          await auditLog(req, "consent_send_denied", "patient", patientId, {
+            role: user.role,
+            reason: "case_closed",
+            status: patient.status,
+          });
+          return res.status(403).json({
+            message:
+              "Cannot send consent - case is closed. Only admin can perform this action.",
+          });
         }
 
         // HIPAA compliance: Staff can only send consent for patients they created, attorneys for assigned patients
@@ -2029,8 +2632,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
           language,
         });
 
+        await patientHistoryLog(
+          req,
+          patient.id,
+          "consent_sent",
+          "Consent sent",
+          "DocuSign consent sent",
+          { envelopeId, language }
+        );
+
         // Schedule alerts
         await alertService.scheduleConsentAlerts(patient.id);
+
+        // Auto-complete the "Send consent form" task for this patient
+        try {
+          const patientTasks = await storage.getTasksByPatient(patient.id);
+          const sendConsentTask = patientTasks.find(
+            (task) =>
+              task.title === "Send consent form" && task.status === "pending"
+          );
+
+          if (sendConsentTask) {
+            await storage.updateTask(sendConsentTask.id, {
+              status: "completed",
+              completedAt: new Date(),
+            });
+
+            await auditLog(req, "task_completed", "task", sendConsentTask.id, {
+              role: user.role,
+              patientId: patient.id,
+              taskTitle: sendConsentTask.title,
+              autoCompleted: true,
+              reason: "consent_form_sent",
+            });
+
+            console.log(
+              `✅ Auto-completed task "${sendConsentTask.title}" for patient ${patient.id}`
+            );
+          }
+        } catch (taskError) {
+          // Log error but don't fail the consent sending
+          console.error("Error auto-completing consent task:", taskError);
+        }
 
         res.json({ message: "Consent form sent successfully", envelopeId });
       } catch (error) {
@@ -2163,6 +2806,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Patient not found" });
         }
 
+        // Check if case is closed - only admin can create notes for closed cases
+        if (patient.status === "case_closed" && user.role !== "admin") {
+          await auditLog(
+            req,
+            "note_create_denied",
+            "patient_notes",
+            patientId,
+            {
+              role: user.role,
+              reason: "case_closed",
+              status: patient.status,
+            }
+          );
+          return res.status(403).json({
+            message:
+              "Cannot create note - case is closed. Only admin can perform this action.",
+          });
+        }
+
         // HIPAA compliance: Enforce role-based access for creating notes
         if (!canAccessPatient(user, patient)) {
           await auditLog(
@@ -2194,6 +2856,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           noteLength: noteData.content.length,
         });
 
+        await patientHistoryLog(
+          req,
+          patientId,
+          "note_created",
+          "Note added",
+          undefined,
+          { noteId: newNote.id, noteType: noteData.noteType }
+        );
+
         res.status(201).json(newNote);
       } catch (error) {
         console.error("Error creating patient note:", error);
@@ -2220,6 +2891,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const patient = await storage.getPatient(patientId);
         if (!patient) {
           return res.status(404).json({ message: "Patient not found" });
+        }
+
+        // Check if case is closed - only admin can edit notes for closed cases
+        if (patient.status === "case_closed" && user.role !== "admin") {
+          await auditLog(req, "note_edit_denied", "patient_notes", noteId, {
+            role: user.role,
+            reason: "case_closed",
+            status: patient.status,
+          });
+          return res.status(403).json({
+            message:
+              "Cannot edit note - case is closed. Only admin can perform this action.",
+          });
         }
 
         if (!canAccessPatient(user, patient)) {
@@ -2257,6 +2941,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           patientId,
           role: user.role,
         });
+
+        await patientHistoryLog(
+          req,
+          patientId,
+          "note_updated",
+          "Note updated",
+          undefined,
+          { noteId, fieldsUpdated: Object.keys(updateData) }
+        );
 
         res.json(updatedNote);
       } catch (error) {
@@ -2307,6 +3000,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           originalCreator: existingNote.createdBy,
         });
 
+        await patientHistoryLog(
+          req,
+          patientId,
+          "note_deleted",
+          "Note deleted",
+          undefined,
+          { noteId, originalCreator: existingNote.createdBy }
+        );
+
         res.json({ message: "Note deleted successfully" });
       } catch (error) {
         console.error("Error deleting patient note:", error);
@@ -2353,7 +3055,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ message: "Access denied - insufficient permissions" });
         }
 
-        const records = await storage.getPatientRecords(patientId);
+        let records = await storage.getPatientRecords(patientId);
+
+        // For staff when case is closed: only show records they uploaded
+        if (patient.status === "case_closed" && user.role === "staff") {
+          records = records.filter((record) => record.uploadedBy === userId);
+        }
 
         await auditLog(req, "records_viewed", "patient_records", patientId, {
           role: user.role,
@@ -2463,6 +3170,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(404).json({ message: "Patient not found" });
         }
 
+        // Check if case is closed - only admin can upload records for closed cases
+        if (patient.status === "case_closed" && user.role !== "admin") {
+          await auditLog(
+            req,
+            "record_upload_denied",
+            "patient_records",
+            patientId,
+            {
+              role: user.role,
+              reason: "case_closed",
+              status: patient.status,
+            }
+          );
+          return res.status(403).json({
+            message:
+              "Cannot upload records - case is closed. Only admin can perform this action.",
+          });
+        }
+
         // Only staff can upload records (they will be forwarded to attorneys)
         if (user.role !== "staff" && user.role !== "admin") {
           await auditLog(
@@ -2561,6 +3287,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
             storageType: useS3 ? "s3" : "local",
           }
         );
+
+        await patientHistoryLog(
+          req,
+          patientId,
+          "record_uploaded",
+          "Record uploaded",
+          req.file.originalname,
+          {
+            recordId: newRecord.id,
+            fileName: req.file.originalname,
+            mimeType: req.file.mimetype,
+          }
+        );
+
+        // Notify admins when staff uploads records
+        // (Admins receive alerts; they can then verify/forward records)
+        if (user.role === "staff") {
+          try {
+            const allUsers = await storage.getUsers();
+            const activeAdmins = allUsers.filter(
+              (u) => u.role === "admin" && u.isActive
+            );
+            const staffName =
+              [user.firstName, user.lastName]
+                .filter(Boolean)
+                .join(" ")
+                .trim() ||
+              user.email ||
+              "Staff";
+            const patientName =
+              `${patient.firstName} ${patient.lastName}`.trim();
+            const message = `Records uploaded for ${patientName} by ${staffName}: ${req.file.originalname}`;
+
+            await Promise.all(
+              activeAdmins.map((admin) =>
+                storage.createAlert({
+                  type: "records_uploaded",
+                  patientId,
+                  userId: admin.id,
+                  message,
+                  scheduledFor: null,
+                  sentAt: null,
+                })
+              )
+            );
+          } catch (notifyError) {
+            // Don't fail upload if alert creation fails
+            console.warn(
+              "Failed to create admin alerts for record upload:",
+              notifyError
+            );
+          }
+        }
 
         res.status(201).json(newRecord);
       } catch (error) {
@@ -2954,6 +3733,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 storageType: "s3",
               }
             );
+
+            await patientHistoryLog(
+              req,
+              patientId,
+              "record_downloaded",
+              "Record downloaded",
+              record.fileName,
+              { recordId, storageType: "s3" }
+            );
           } catch (s3Error) {
             console.error("Error downloading from S3:", s3Error);
             return res
@@ -2994,6 +3782,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 role: user.role,
                 storageType: "local",
               }
+            );
+
+            await patientHistoryLog(
+              req,
+              patientId,
+              "record_downloaded",
+              "Record downloaded",
+              record.fileName,
+              { recordId, storageType: "local" }
             );
           } catch (localError) {
             console.error("Error reading local file:", localError);
@@ -3084,6 +3881,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           patientId,
           storageType: record.storageType || "unknown",
         });
+
+        await patientHistoryLog(
+          req,
+          patientId,
+          "record_deleted",
+          "Record deleted",
+          record.fileName,
+          { recordId, storageType: record.storageType || "unknown" }
+        );
 
         res.json({ message: "Patient record deleted successfully" });
       } catch (error) {
@@ -3394,6 +4200,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Patient not found" });
       }
 
+      // Check if case is closed - only admin can create appointments for closed cases
+      if (patient.status === "case_closed" && user.role !== "admin") {
+        await auditLog(req, "appointment_create_denied", "appointments", "", {
+          role: user.role,
+          reason: "case_closed",
+          status: patient.status,
+        });
+        return res.status(403).json({
+          message:
+            "Cannot create appointment - case is closed. Only admin can perform this action.",
+        });
+      }
+
       // HIPAA compliance: Staff can only schedule appointments for patients they created
       if (user.role !== "admin" && patient.createdBy.id !== userId) {
         await auditLog(req, "appointment_create_denied", "appointment", "", {
@@ -3432,6 +4251,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: appointmentData.status,
       });
 
+      // Send appointment confirmation email to patient
+      if (patient.email && appointmentData.scheduledAt) {
+        try {
+          await sendAppointmentEmail({
+            to: patient.email,
+            patientName: `${patient.firstName} ${patient.lastName}`,
+            scheduledAt: new Date(appointmentData.scheduledAt),
+            duration: appointmentData.duration || 60,
+            location: appointmentData.notes || null,
+            isUpdate: false,
+          });
+
+          // Log email sent in patient history
+          await patientHistoryLog(
+            req,
+            patient.id,
+            "appointment_email_sent",
+            "Appointment confirmation email sent",
+            `Confirmation email sent to ${patient.email}`,
+            {
+              appointmentId: appointment.id,
+              emailType: "confirmation",
+            }
+          );
+        } catch (emailError) {
+          // Log error but don't fail the appointment creation
+          console.error("Error sending appointment email:", emailError);
+          // Still log that we attempted to send email
+          await patientHistoryLog(
+            req,
+            patient.id,
+            "appointment_email_failed",
+            "Appointment email failed to send",
+            `Failed to send confirmation email to ${patient.email}`,
+            {
+              appointmentId: appointment.id,
+              emailType: "confirmation",
+              error: (emailError as Error).message,
+            }
+          );
+        }
+      }
+
       res.status(201).json(appointment);
     } catch (error) {
       console.error("Error creating appointment:", error);
@@ -3439,6 +4301,853 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: "Failed to create appointment",
         error: (error as Error).message,
       });
+    }
+  });
+
+  // Update appointment (reschedule/status/notes) - admin/staff only
+  app.put("/api/appointments/:id", authGuard, async (req: any, res) => {
+    try {
+      const appointmentId = req.params.id;
+      const authenticatedUser = req.user as AuthenticatedUser;
+      const userId = authenticatedUser.id;
+      const user = await storage.getUser(userId);
+
+      if (!user) {
+        return res.status(403).json({ message: "User not found" });
+      }
+
+      if (user.role !== "admin" && user.role !== "staff") {
+        await auditLog(
+          req,
+          "appointment_update_denied",
+          "appointment",
+          appointmentId,
+          {
+            role: user.role,
+            reason: "insufficient_role",
+          }
+        );
+        return res
+          .status(403)
+          .json({ message: "Insufficient permissions to update appointments" });
+      }
+
+      const existing = await storage.getAppointment(appointmentId);
+      if (!existing) {
+        return res.status(404).json({ message: "Appointment not found" });
+      }
+
+      const patient = await storage.getPatient(existing.patientId);
+      if (!patient) {
+        return res.status(404).json({ message: "Patient not found" });
+      }
+
+      // Staff can only update appointments for patients they created
+      if (user.role !== "admin" && patient.createdBy.id !== userId) {
+        await auditLog(
+          req,
+          "appointment_update_denied",
+          "appointment",
+          appointmentId,
+          {
+            role: user.role,
+            patientId: existing.patientId,
+            reason: "not_patient_creator",
+          }
+        );
+        return res.status(403).json({
+          message:
+            "Access denied - can only update appointments for patients you created",
+        });
+      }
+
+      const appointmentData = insertAppointmentSchema.partial().parse(req.body);
+
+      const updated = await storage.updateAppointment(
+        appointmentId,
+        appointmentData
+      );
+
+      const scheduledAtChanged =
+        appointmentData.scheduledAt !== undefined &&
+        new Date(appointmentData.scheduledAt as any).getTime() !==
+          new Date(existing.scheduledAt).getTime();
+
+      const statusChanged =
+        appointmentData.status !== undefined &&
+        appointmentData.status !== (existing.status as any);
+
+      await auditLog(
+        req,
+        scheduledAtChanged ? "appointment_rescheduled" : "updated",
+        "appointment",
+        appointmentId,
+        {
+          role: user.role,
+          patientId: existing.patientId,
+          fieldsUpdated: Object.keys(appointmentData),
+          scheduledAtChanged,
+          statusChanged,
+          oldStatus: existing.status,
+          newStatus: appointmentData.status,
+        }
+      );
+
+      // Optional: if appointment status marked completed, log treatment completion intent (status workflow handled separately)
+      if (statusChanged && appointmentData.status === "completed") {
+        await auditLog(
+          req,
+          "appointment_completed",
+          "appointment",
+          appointmentId,
+          {
+            role: user.role,
+            patientId: existing.patientId,
+          }
+        );
+      }
+
+      if (scheduledAtChanged) {
+        await patientHistoryLog(
+          req,
+          existing.patientId,
+          "appointment_rescheduled",
+          "Appointment rescheduled",
+          undefined,
+          {
+            appointmentId,
+            oldScheduledAt: existing.scheduledAt,
+            newScheduledAt: appointmentData.scheduledAt,
+          }
+        );
+
+        // Send appointment update email to patient when time changes
+        if (patient.email && appointmentData.scheduledAt) {
+          try {
+            await sendAppointmentEmail({
+              to: patient.email,
+              patientName: `${patient.firstName} ${patient.lastName}`,
+              scheduledAt: new Date(appointmentData.scheduledAt as any),
+              duration: updated.duration || 60,
+              location: updated.notes || null,
+              isUpdate: true,
+              oldScheduledAt: new Date(existing.scheduledAt),
+            });
+
+            // Log email sent in patient history
+            await patientHistoryLog(
+              req,
+              existing.patientId,
+              "appointment_email_sent",
+              "Appointment update email sent",
+              `Update email sent to ${patient.email}`,
+              {
+                appointmentId,
+                emailType: "update",
+              }
+            );
+          } catch (emailError) {
+            // Log error but don't fail the appointment update
+            console.error(
+              "Error sending appointment update email:",
+              emailError
+            );
+            // Still log that we attempted to send email
+            await patientHistoryLog(
+              req,
+              existing.patientId,
+              "appointment_email_failed",
+              "Appointment email failed to send",
+              `Failed to send update email to ${patient.email}`,
+              {
+                appointmentId,
+                emailType: "update",
+                error: (emailError as Error).message,
+              }
+            );
+          }
+        }
+      } else if (Object.keys(appointmentData).length > 0) {
+        await patientHistoryLog(
+          req,
+          existing.patientId,
+          "appointment_updated",
+          "Appointment updated",
+          undefined,
+          { appointmentId, fieldsUpdated: Object.keys(appointmentData) }
+        );
+      }
+
+      if (statusChanged && appointmentData.status === "completed") {
+        await patientHistoryLog(
+          req,
+          existing.patientId,
+          "appointment_completed",
+          "Appointment completed",
+          undefined,
+          { appointmentId }
+        );
+      }
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating appointment:", error);
+      res.status(400).json({
+        message: "Failed to update appointment",
+        error: (error as Error).message,
+      });
+    }
+  });
+
+  // Mark treatment completed (staff/admin) - updates patient status and logs
+  app.post(
+    "/api/patients/:id/treatment-completed",
+    authGuard,
+    async (req: any, res) => {
+      try {
+        const patientId = req.params.id;
+        const authenticatedUser = req.user as AuthenticatedUser;
+        const userId = authenticatedUser.id;
+        const user = await storage.getUser(userId);
+
+        if (!user) return res.status(403).json({ message: "User not found" });
+        if (user.role !== "admin" && user.role !== "staff") {
+          await auditLog(
+            req,
+            "treatment_complete_denied",
+            "patient",
+            patientId,
+            {
+              role: user.role,
+              reason: "insufficient_role",
+            }
+          );
+          return res.status(403).json({ message: "Insufficient permissions" });
+        }
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient)
+          return res.status(404).json({ message: "Patient not found" });
+        if (!canAccessPatient(user, patient)) {
+          await auditLog(
+            req,
+            "treatment_complete_denied",
+            "patient",
+            patientId,
+            {
+              role: user.role,
+              reason: "insufficient_permissions",
+            }
+          );
+          return res
+            .status(403)
+            .json({ message: "Access denied - insufficient permissions" });
+        }
+
+        const oldStatus = patient.status;
+        const updatedPatient = await storage.updatePatient(patientId, {
+          status: "treatment_completed" as any,
+        });
+
+        await auditLog(req, "treatment_completed", "patient", patientId, {
+          role: user.role,
+          completedBy: userId,
+          oldStatus,
+          newStatus: "treatment_completed",
+        });
+
+        await patientHistoryLog(
+          req,
+          patientId,
+          "treatment_completed",
+          "Treatment completed",
+          undefined,
+          { oldStatus, newStatus: "treatment_completed" }
+        );
+
+        res.json({
+          message: "Treatment marked as completed",
+          patient: updatedPatient,
+        });
+      } catch (error) {
+        console.error("Error marking treatment completed:", error);
+        res.status(500).json({ message: "Failed to mark treatment completed" });
+      }
+    }
+  );
+
+  // Get records forwarding status - checks if there are new records to forward and if admin should see buttons
+  app.get(
+    "/api/patients/:id/records/forward-status",
+    authGuard,
+    async (req: any, res) => {
+      try {
+        const patientId = req.params.id;
+        const authenticatedUser = req.user as AuthenticatedUser;
+        const userId = authenticatedUser.id;
+        const user = await storage.getUser(userId);
+
+        if (!user) return res.status(403).json({ message: "User not found" });
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient)
+          return res.status(404).json({ message: "Patient not found" });
+        if (!canAccessPatient(user, patient)) {
+          return res
+            .status(403)
+            .json({ message: "Access denied - insufficient permissions" });
+        }
+
+        const records = await storage.getPatientRecords(patientId);
+        const historyLogs = await storage.getPatientHistoryLogs(patientId);
+
+        // Find the most recent forward event
+        const forwardLogs = historyLogs.filter(
+          (log) => log.eventType === "records_forwarded"
+        );
+        const lastForwardLog = forwardLogs.length > 0 ? forwardLogs[0] : null;
+        const lastForwardTimestamp = lastForwardLog?.createdAt
+          ? new Date(lastForwardLog.createdAt)
+          : null;
+
+        // Find the most recent verify or correction event
+        const verifyLogs = historyLogs.filter(
+          (log) =>
+            log.eventType === "records_verified" ||
+            log.eventType === "records_sent_for_correction"
+        );
+        const lastVerifyOrCorrectionLog =
+          verifyLogs.length > 0 ? verifyLogs[0] : null;
+        const lastVerifyOrCorrectionTimestamp =
+          lastVerifyOrCorrectionLog?.createdAt
+            ? new Date(lastVerifyOrCorrectionLog.createdAt)
+            : null;
+
+        // Check if there are new records (created after last forward)
+        const hasNewRecords =
+          !lastForwardTimestamp ||
+          records.some(
+            (record) =>
+              lastForwardTimestamp &&
+              record.createdAt &&
+              new Date(record.createdAt) > lastForwardTimestamp
+          );
+
+        // For admin: show buttons if status is records_forwarded AND
+        // the last forward is after the last verify/correction (meaning there are pending records)
+        const shouldShowAdminButtons =
+          user.role === "admin" &&
+          patient.status === "records_forwarded" &&
+          lastForwardLog &&
+          lastForwardLog.createdAt &&
+          (!lastVerifyOrCorrectionTimestamp ||
+            (lastVerifyOrCorrectionTimestamp &&
+              new Date(lastForwardLog.createdAt as string | number | Date) >
+                lastVerifyOrCorrectionTimestamp));
+
+        res.json({
+          hasNewRecords,
+          shouldShowAdminButtons,
+          lastForwardTimestamp: lastForwardTimestamp?.toISOString() || null,
+          lastVerifyOrCorrectionTimestamp:
+            lastVerifyOrCorrectionTimestamp?.toISOString() || null,
+        });
+      } catch (error) {
+        console.error("Error checking records forward status:", error);
+        res.status(500).json({ message: "Failed to check records status" });
+      }
+    }
+  );
+
+  // Forward records (admin/staff) - logs who records were forwarded to and updates patient status
+  app.post(
+    "/api/patients/:id/records/forward",
+    authGuard,
+    async (req: any, res) => {
+      try {
+        const patientId = req.params.id;
+        const authenticatedUser = req.user as AuthenticatedUser;
+        const userId = authenticatedUser.id;
+        const user = await storage.getUser(userId);
+
+        if (!user) return res.status(403).json({ message: "User not found" });
+        if (user.role !== "admin" && user.role !== "staff") {
+          await auditLog(req, "records_forward_denied", "patient", patientId, {
+            role: user.role,
+            reason: "insufficient_role",
+          });
+          return res.status(403).json({ message: "Insufficient permissions" });
+        }
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient)
+          return res.status(404).json({ message: "Patient not found" });
+        if (!canAccessPatient(user, patient)) {
+          await auditLog(req, "records_forward_denied", "patient", patientId, {
+            role: user.role,
+            reason: "insufficient_permissions",
+          });
+          return res
+            .status(403)
+            .json({ message: "Access denied - insufficient permissions" });
+        }
+
+        const forwardToUserIds: string[] = Array.isArray(
+          req.body?.forwardToUserIds
+        )
+          ? req.body.forwardToUserIds.filter(
+              (id: any) => typeof id === "string"
+            )
+          : [];
+        const forwardToAdmins: boolean = req.body?.forwardToAdmins === true;
+        const note: string | undefined =
+          typeof req.body?.note === "string" ? req.body.note.trim() : undefined;
+
+        // Convenience: allow forwarding to admins without the client having to look up admin IDs
+        // - Staff UI should set { forwardToAdmins: true }
+        let effectiveForwardToUserIds = forwardToUserIds;
+        if (effectiveForwardToUserIds.length === 0 && forwardToAdmins) {
+          const allUsers = await storage.getUsers();
+          const activeAdmins = allUsers.filter(
+            (u) => u.role === "admin" && u.isActive
+          );
+          effectiveForwardToUserIds = activeAdmins.map((a) => a.id);
+        }
+        if (effectiveForwardToUserIds.length === 0) {
+          return res
+            .status(400)
+            .json({ message: "forwardToUserIds is required" });
+        }
+
+        // Validate recipients exist and are active
+        const recipients = await Promise.all(
+          effectiveForwardToUserIds.map((id) => storage.getUser(id))
+        );
+        const invalidRecipient = recipients.find((u) => !u || !u.isActive);
+        if (invalidRecipient) {
+          return res.status(400).json({
+            message: "One or more recipients are invalid or inactive",
+          });
+        }
+
+        const oldStatus = patient.status;
+        const updatedPatient = await storage.updatePatient(patientId, {
+          status: "records_forwarded" as any,
+        });
+
+        await auditLog(req, "records_forwarded", "patient", patientId, {
+          role: user.role,
+          forwardedBy: userId,
+          forwardToUserIds: effectiveForwardToUserIds,
+          noteLength: note ? note.length : 0,
+          oldStatus,
+          newStatus: "records_forwarded",
+        });
+
+        // Store forward timestamp to track which records were forwarded
+        const forwardTimestamp = new Date();
+        await patientHistoryLog(
+          req,
+          patientId,
+          "records_forwarded",
+          "Records forwarded for verification",
+          note,
+          {
+            oldStatus,
+            newStatus: "records_forwarded",
+            forwardToUserIds: effectiveForwardToUserIds,
+            forwardedBy: userId,
+            forwardTimestamp: forwardTimestamp.toISOString(),
+          }
+        );
+
+        // Notify admins when staff forwards records
+        if (user.role === "staff") {
+          try {
+            const staffName =
+              [user.firstName, user.lastName]
+                .filter(Boolean)
+                .join(" ")
+                .trim() ||
+              user.email ||
+              "Staff";
+            const patientName =
+              `${patient.firstName} ${patient.lastName}`.trim();
+            const message = `${staffName} has forwarded records for ${patientName} for verification`;
+
+            await Promise.all(
+              effectiveForwardToUserIds.map((adminId) =>
+                storage.createAlert({
+                  type: "records_forwarded",
+                  patientId,
+                  userId: adminId,
+                  message,
+                  scheduledFor: new Date(),
+                })
+              )
+            );
+          } catch (notifyError) {
+            // Don't fail forward if alert creation fails
+            console.warn(
+              "Failed to create admin alerts for record forwarding:",
+              notifyError
+            );
+          }
+        }
+
+        res.json({ message: "Records forwarded", patient: updatedPatient });
+      } catch (error) {
+        console.error("Error forwarding records:", error);
+        res.status(500).json({ message: "Failed to forward records" });
+      }
+    }
+  );
+
+  // Verify forwarded records (admin only) - sets status to records_forwarded after verification
+  app.post(
+    "/api/patients/:id/records/verify",
+    authGuard,
+    async (req: any, res) => {
+      try {
+        const patientId = req.params.id;
+        const authenticatedUser = req.user as AuthenticatedUser;
+        const userId = authenticatedUser.id;
+        const user = await storage.getUser(userId);
+
+        if (!user) return res.status(403).json({ message: "User not found" });
+        if (user.role !== "admin") {
+          await auditLog(req, "records_verify_denied", "patient", patientId, {
+            role: user.role,
+            reason: "insufficient_role",
+          });
+          return res.status(403).json({ message: "Insufficient permissions" });
+        }
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient)
+          return res.status(404).json({ message: "Patient not found" });
+        if (!canAccessPatient(user, patient)) {
+          await auditLog(req, "records_verify_denied", "patient", patientId, {
+            role: user.role,
+            reason: "insufficient_permissions",
+          });
+          return res
+            .status(403)
+            .json({ message: "Access denied - insufficient permissions" });
+        }
+
+        const note: string | undefined =
+          typeof req.body?.note === "string" ? req.body.note.trim() : undefined;
+
+        const oldStatus = patient.status;
+        // After verification, change status to records_verified
+        const updatedPatient = await storage.updatePatient(patientId, {
+          status: "records_verified" as any,
+        });
+
+        await auditLog(req, "records_verified", "patient", patientId, {
+          role: user.role,
+          verifiedBy: userId,
+          oldStatus,
+          newStatus: "records_verified",
+          noteLength: note ? note.length : 0,
+        });
+
+        await patientHistoryLog(
+          req,
+          patientId,
+          "records_verified",
+          "Records verified",
+          note,
+          {
+            oldStatus,
+            newStatus: "records_verified",
+            verifiedAt: new Date().toISOString(),
+          }
+        );
+
+        // Notify staff who forwarded the records
+        try {
+          // Find who forwarded the records by checking patient history logs
+          const historyLogs = await storage.getPatientHistoryLogs(patientId);
+          const forwardLog = historyLogs.find(
+            (log) =>
+              log.eventType === "records_forwarded" &&
+              log.metadata &&
+              typeof log.metadata === "object" &&
+              "forwardedBy" in log.metadata
+          );
+
+          if (forwardLog && forwardLog.metadata) {
+            const metadata = forwardLog.metadata as any;
+            const forwardedByUserId = metadata.forwardedBy;
+            const forwardedByUser = await storage.getUser(forwardedByUserId);
+
+            if (forwardedByUser && forwardedByUser.role === "staff") {
+              const adminName =
+                [user.firstName, user.lastName]
+                  .filter(Boolean)
+                  .join(" ")
+                  .trim() ||
+                user.email ||
+                "Admin";
+              const patientName =
+                `${patient.firstName} ${patient.lastName}`.trim();
+              const message = `${adminName} has verified the records for ${patientName}`;
+
+              await storage.createAlert({
+                type: "records_verified",
+                patientId,
+                userId: forwardedByUserId,
+                message,
+                scheduledFor: new Date(),
+              });
+            }
+          }
+        } catch (notifyError) {
+          // Don't fail verify if alert creation fails
+          console.warn(
+            "Failed to create staff alert for record verification:",
+            notifyError
+          );
+        }
+
+        res.json({ message: "Records verified", patient: updatedPatient });
+      } catch (error) {
+        console.error("Error verifying records:", error);
+        res.status(500).json({ message: "Failed to verify records" });
+      }
+    }
+  );
+
+  // Send records for correction (admin only) - sets status back to pending_records
+  app.post(
+    "/api/patients/:id/records/send-for-correction",
+    authGuard,
+    async (req: any, res) => {
+      try {
+        const patientId = req.params.id;
+        const authenticatedUser = req.user as AuthenticatedUser;
+        const userId = authenticatedUser.id;
+        const user = await storage.getUser(userId);
+
+        if (!user) return res.status(403).json({ message: "User not found" });
+        if (user.role !== "admin") {
+          await auditLog(
+            req,
+            "records_correction_denied",
+            "patient",
+            patientId,
+            {
+              role: user.role,
+              reason: "insufficient_role",
+            }
+          );
+          return res.status(403).json({ message: "Insufficient permissions" });
+        }
+
+        const patient = await storage.getPatient(patientId);
+        if (!patient)
+          return res.status(404).json({ message: "Patient not found" });
+        if (!canAccessPatient(user, patient)) {
+          await auditLog(
+            req,
+            "records_correction_denied",
+            "patient",
+            patientId,
+            {
+              role: user.role,
+              reason: "insufficient_permissions",
+            }
+          );
+          return res
+            .status(403)
+            .json({ message: "Access denied - insufficient permissions" });
+        }
+
+        const correctionMessage: string | undefined =
+          typeof req.body?.note === "string" ? req.body.note.trim() : undefined;
+
+        if (!correctionMessage || correctionMessage.length === 0) {
+          return res.status(400).json({
+            message: "Correction message is required",
+          });
+        }
+
+        const oldStatus = patient.status;
+        const updatedPatient = await storage.updatePatient(patientId, {
+          status: "pending_records" as any,
+        });
+
+        // Create a legal note with the correction message
+        try {
+          await storage.createPatientNote({
+            patientId,
+            createdBy: userId,
+            content: correctionMessage,
+            noteType: "legal",
+          });
+        } catch (noteError) {
+          console.warn(
+            "Failed to create legal note for correction:",
+            noteError
+          );
+          // Continue even if note creation fails
+        }
+
+        await auditLog(
+          req,
+          "records_sent_for_correction",
+          "patient",
+          patientId,
+          {
+            role: user.role,
+            sentBy: userId,
+            oldStatus,
+            newStatus: "pending_records",
+            noteLength: correctionMessage ? correctionMessage.length : 0,
+          }
+        );
+
+        await patientHistoryLog(
+          req,
+          patientId,
+          "records_sent_for_correction",
+          "Records sent for correction",
+          correctionMessage,
+          {
+            oldStatus,
+            newStatus: "pending_records",
+            correctedAt: new Date().toISOString(),
+          }
+        );
+
+        // Notify staff who forwarded the records
+        try {
+          // Find who forwarded the records by checking patient history logs
+          const historyLogs = await storage.getPatientHistoryLogs(patientId);
+          const forwardLog = historyLogs.find(
+            (log) =>
+              log.eventType === "records_forwarded" &&
+              log.metadata &&
+              typeof log.metadata === "object" &&
+              "forwardedBy" in log.metadata
+          );
+
+          if (forwardLog && forwardLog.metadata) {
+            const metadata = forwardLog.metadata as any;
+            const forwardedByUserId = metadata.forwardedBy;
+            const forwardedByUser = await storage.getUser(forwardedByUserId);
+
+            if (forwardedByUser && forwardedByUser.role === "staff") {
+              const adminName =
+                [user.firstName, user.lastName]
+                  .filter(Boolean)
+                  .join(" ")
+                  .trim() ||
+                user.email ||
+                "Admin";
+              const patientName =
+                `${patient.firstName} ${patient.lastName}`.trim();
+              const message = `${adminName} has sent records for ${patientName} back for correction${
+                correctionMessage ? `: ${correctionMessage}` : ""
+              }`;
+
+              await storage.createAlert({
+                type: "records_correction_needed",
+                patientId,
+                userId: forwardedByUserId,
+                message,
+                scheduledFor: new Date(),
+              });
+            }
+          }
+        } catch (notifyError) {
+          // Don't fail if alert creation fails
+          console.warn(
+            "Failed to create staff alert for record correction:",
+            notifyError
+          );
+        }
+
+        res.json({
+          message: "Records sent for correction",
+          patient: updatedPatient,
+        });
+      } catch (error) {
+        console.error("Error sending records for correction:", error);
+        res
+          .status(500)
+          .json({ message: "Failed to send records for correction" });
+      }
+    }
+  );
+
+  // Close case (admin only) - sets status to case_closed
+  app.post("/api/patients/:id/close-case", authGuard, async (req: any, res) => {
+    try {
+      const patientId = req.params.id;
+      const authenticatedUser = req.user as AuthenticatedUser;
+      const userId = authenticatedUser.id;
+      const user = await storage.getUser(userId);
+
+      if (!user) return res.status(403).json({ message: "User not found" });
+      if (user.role !== "admin") {
+        await auditLog(req, "case_close_denied", "patient", patientId, {
+          role: user.role,
+          reason: "insufficient_role",
+        });
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+
+      const patient = await storage.getPatient(patientId);
+      if (!patient)
+        return res.status(404).json({ message: "Patient not found" });
+      if (!canAccessPatient(user, patient)) {
+        await auditLog(req, "case_close_denied", "patient", patientId, {
+          role: user.role,
+          reason: "insufficient_permissions",
+        });
+        return res
+          .status(403)
+          .json({ message: "Access denied - insufficient permissions" });
+      }
+
+      // Only allow closing cases that are in records_verified status
+      if (patient.status !== "records_verified") {
+        return res.status(400).json({
+          message: `Cannot close case - patient status is ${patient.status}. Only records_verified cases can be closed.`,
+        });
+      }
+
+      const oldStatus = patient.status;
+      const updatedPatient = await storage.updatePatient(patientId, {
+        status: "case_closed" as any,
+      });
+
+      await auditLog(req, "case_closed", "patient", patientId, {
+        role: user.role,
+        closedBy: userId,
+        oldStatus,
+        newStatus: "case_closed",
+      });
+
+      await patientHistoryLog(
+        req,
+        patientId,
+        "case_closed",
+        "Case closed",
+        undefined,
+        { oldStatus, newStatus: "case_closed", closedBy: userId }
+      );
+
+      res.json({
+        message: "Case closed successfully",
+        patient: updatedPatient,
+      });
+    } catch (error) {
+      console.error("Error closing case:", error);
+      res.status(500).json({ message: "Failed to close case" });
     }
   });
 
@@ -3539,6 +5248,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching audit logs:", error);
       res.status(500).json({ message: "Failed to fetch audit logs" });
+    }
+  });
+
+  // Patient history (product timeline) - Admin only
+  app.get("/api/patients/:id/history", authGuard, async (req: any, res) => {
+    try {
+      const authenticatedUser = req.user as AuthenticatedUser;
+      const user = await storage.getUser(authenticatedUser.id);
+
+      if (user?.role !== "admin") {
+        return res.status(403).json({ message: "Insufficient permissions" });
+      }
+
+      const patientId = req.params.id;
+      const logs = await storage.getPatientHistoryLogs(patientId);
+      res.json(logs);
+    } catch (error) {
+      console.error("Error fetching patient history logs:", error);
+      res.status(500).json({ message: "Failed to fetch patient history logs" });
     }
   });
 

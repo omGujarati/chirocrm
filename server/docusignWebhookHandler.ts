@@ -165,6 +165,32 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
             envelopeId: envelopeId,
           },
         });
+
+        await storage.createPatientHistoryLog({
+          patientId: patient.id,
+          actorUserId: userId,
+          eventType: "consent_signed",
+          title: "Consent signed",
+          message: "DocuSign consent completed by patient",
+          metadata: {
+            oldStatus: patient.status,
+            newStatus: "consent_signed",
+            source: "docusign_webhook",
+            envelopeId,
+            completedTime,
+          },
+        });
+
+        // Send notification to admin when patient signs consent
+        await notificationService.createInAppNotification({
+          type: "consent_signed",
+          patientId: patient.id,
+          message: `Patient ${patient.firstName} ${patient.lastName} has signed the consent form. Status updated to consent_signed.`,
+          isUrgent: false,
+          targetRole: "admin",
+        });
+
+        console.log("📢 Admin notification sent for signed consent");
         break;
 
       case "declined":
@@ -187,6 +213,25 @@ export async function docusignWebhookHandler(req: Request, res: Response) {
             newValue: "pending_consent",
             source: "docusign_webhook",
             envelopeId: envelopeId,
+            reason: status,
+          },
+        });
+
+        await storage.createPatientHistoryLog({
+          patientId: patient.id,
+          actorUserId: userId,
+          eventType:
+            status === "declined" ? "consent_declined" : "consent_voided",
+          title: status === "declined" ? "Consent declined" : "Consent voided",
+          message:
+            status === "declined"
+              ? "DocuSign consent was declined by patient"
+              : "DocuSign consent was voided",
+          metadata: {
+            oldStatus: patient.status,
+            newStatus: "pending_consent",
+            source: "docusign_webhook",
+            envelopeId,
             reason: status,
           },
         });

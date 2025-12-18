@@ -4,7 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { type PatientNote } from "@shared/schema";
+import { type PatientNote, type PatientHistoryLog } from "@shared/schema";
 import {
   Dialog,
   DialogContent,
@@ -46,6 +46,7 @@ import {
   Calendar,
   FileText,
   Scale,
+  History,
 } from "lucide-react";
 
 const noteSchema = z.object({
@@ -70,7 +71,9 @@ export default function PatientDetailModal({
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "notes">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "notes" | "history">(
+    "overview"
+  );
   const [isEditingAssignment, setIsEditingAssignment] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState<string>("");
   const [isEditingEnvelopeId, setIsEditingEnvelopeId] = useState(false);
@@ -142,6 +145,24 @@ export default function PatientDetailModal({
   });
 
   const typedNotes = notes as PatientNote[];
+
+  // Fetch patient audit log history (admin only)
+  const { data: historyLogs = [], isLoading: historyLogsLoading } = useQuery<
+    PatientHistoryLog[]
+  >({
+    queryKey: ["/api/patients", patient?.id, "history"],
+    queryFn: async () => {
+      const response = await fetch(`/api/patients/${patient.id}/history`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error("Failed to fetch patient history");
+      }
+      return await response.json();
+    },
+    enabled: !!patient?.id && open && user?.role === "admin",
+    retry: false,
+  });
 
   // Create note mutation
   const createNoteMutation = useMutation({
@@ -353,6 +374,32 @@ export default function PatientDetailModal({
     return new Date(dateString).toLocaleString();
   };
 
+  const getHistoryDescription = (log: PatientHistoryLog) =>
+    log.message || log.title;
+
+  const getHistoryBadgeClass = (eventType: string) => {
+    switch (eventType) {
+      case "created":
+        return "bg-amber-100 text-amber-800 border-amber-200";
+      case "consent_sent":
+        return "bg-blue-100 text-blue-800 border-blue-200";
+      case "consultation_scheduled":
+      case "consultation_rescheduled":
+      case "appointment_rescheduled":
+        return "bg-indigo-100 text-indigo-800 border-indigo-200";
+      case "appointment_completed":
+      case "treatment_completed":
+        return "bg-emerald-100 text-emerald-800 border-emerald-200";
+      case "records_forwarded":
+      case "records_verified":
+        return "bg-purple-100 text-purple-800 border-purple-200";
+      case "case_dropped":
+        return "bg-red-100 text-red-800 border-red-200";
+      default:
+        return "bg-gray-100 text-gray-800 border-gray-200";
+    }
+  };
+
   const getNoteTypeColor = (type: string) => {
     switch (type) {
       case "appointment":
@@ -399,23 +446,39 @@ export default function PatientDetailModal({
           >
             Overview
           </button>
-          <button
-            className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
-              activeTab === "notes"
-                ? "text-primary border-b-2 border-primary"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            onClick={() => setActiveTab("notes")}
-            data-testid="tab-notes"
-          >
-            <StickyNote className="w-4 h-4" />
-            Notes ({typedNotes.length})
-          </button>
+          {patient.status !== "case_closed" && (
+            <button
+              className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+                activeTab === "notes"
+                  ? "text-primary border-b-2 border-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => setActiveTab("notes")}
+              data-testid="tab-notes"
+            >
+              <StickyNote className="w-4 h-4" />
+              Notes ({typedNotes.length})
+            </button>
+          )}
+          {user?.role === "admin" && (
+            <button
+              className={`px-4 py-2 font-medium transition-colors flex items-center gap-2 ${
+                activeTab === "history"
+                  ? "text-primary border-b-2 border-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => setActiveTab("history")}
+              data-testid="tab-history"
+            >
+              <History className="w-4 h-4" />
+              History ({historyLogs.length})
+            </button>
+          )}
         </div>
 
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           {activeTab === "overview" && (
-            <div className="h-full overflow-y-auto p-6">
+            <div className="h-full max-h-[500px] overflow-y-auto p-6">
               {/* Patient Information */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card>
@@ -475,7 +538,7 @@ export default function PatientDetailModal({
                   </CardContent>
                 </Card>
 
-                <Card>
+                <Card className="overflow-y-auto sm:max-h-full md:max-h-[300px]">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Scale className="w-5 h-5" />
@@ -495,7 +558,13 @@ export default function PatientDetailModal({
 
                     <div>
                       <label className="text-sm font-medium text-muted-foreground flex items-center justify-between">
-                        Assigned To
+                        Assigned To{" "}
+                        {patient.assignedAttorney.id === user?.id && (
+                          <span className="inline-flex items-center gap-1 ml-2 px-2 py-1 border border-primary/20 rounded-full bg-primary/10 text-primary text-xs font-semibold shadow-sm">
+                            <User className="w-3 h-3 mr-0.5" />
+                            You
+                          </span>
+                        )}
                         {user?.role === "admin" && !isEditingAssignment && (
                           <Button
                             variant="ghost"
@@ -678,20 +747,21 @@ export default function PatientDetailModal({
           )}
 
           {activeTab === "notes" && (
-            <div className="h-full flex gap-6 p-6">
-              {/* Notes List */}
-              <div className="flex-1 overflow-y-auto">
-                <Card>
+            <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 p-4 sm:p-6 overflow-y-auto max-h-[70vh] lg:max-h-[500px]">
+              {/* ===================== Notes List ===================== */}
+              <div className="w-full lg:flex-1">
+                <Card className="flex flex-col">
                   <CardHeader>
                     <CardTitle className="text-lg flex items-center gap-2">
                       <StickyNote className="w-5 h-5" />
                       Patient Notes ({typedNotes.length})
                     </CardTitle>
                   </CardHeader>
-                  <CardContent>
+
+                  <CardContent className="">
                     {notesLoading ? (
                       <div className="text-center py-8">
-                        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
                         <p className="text-muted-foreground">
                           Loading notes...
                         </p>
@@ -703,7 +773,7 @@ export default function PatientDetailModal({
                           No notes found for this patient
                         </p>
                         <p className="text-sm text-muted-foreground mt-2">
-                          Add the first note using the form on the right
+                          Add the first note using the form below
                         </p>
                       </div>
                     ) : (
@@ -720,19 +790,16 @@ export default function PatientDetailModal({
                                   className={`text-xs ${getNoteTypeColor(
                                     note.noteType || "general"
                                   )}`}
-                                  data-testid={`badge-note-type-${note.id}`}
                                 >
                                   {note.noteType || "general"}
                                 </Badge>
-                                <span
-                                  className="text-xs text-muted-foreground"
-                                  data-testid={`text-note-date-${note.id}`}
-                                >
+                                <span className="text-xs text-muted-foreground">
                                   {note.createdAt
                                     ? new Date(note.createdAt).toLocaleString()
                                     : "Unknown date"}
                                 </span>
                               </div>
+
                               <div className="flex gap-1">
                                 {note.createdBy === user?.id && (
                                   <Button
@@ -740,7 +807,6 @@ export default function PatientDetailModal({
                                     size="sm"
                                     onClick={() => startEdit(note)}
                                     className="h-8 w-8 p-0"
-                                    data-testid={`button-edit-note-${note.id}`}
                                   >
                                     <Edit2 className="w-3 h-3" />
                                   </Button>
@@ -754,19 +820,17 @@ export default function PatientDetailModal({
                                     }
                                     disabled={deleteNoteMutation.isPending}
                                     className="h-8 w-8 p-0 text-red-600 hover:text-white"
-                                    data-testid={`button-delete-note-${note.id}`}
                                   >
                                     <Trash2 className="w-3 h-3" />
                                   </Button>
                                 )}
                               </div>
                             </div>
-                            <p
-                              className="text-sm text-foreground whitespace-pre-wrap"
-                              data-testid={`text-note-content-${note.id}`}
-                            >
+
+                            <p className="text-sm text-foreground whitespace-pre-wrap">
                               {note.content}
                             </p>
+
                             {note.updatedAt &&
                               note.updatedAt !== note.createdAt && (
                                 <p className="text-xs text-muted-foreground mt-2">
@@ -782,14 +846,14 @@ export default function PatientDetailModal({
                 </Card>
               </div>
 
-              {/* Add/Edit Note Form */}
-              <div className="w-96">
+              <div className="w-full lg:w-96 flex-shrink-0">
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-lg">
                       {editingNoteId ? "Edit Note" : "Add New Note"}
                     </CardTitle>
                   </CardHeader>
+
                   <CardContent>
                     <Form {...form}>
                       <form
@@ -807,7 +871,7 @@ export default function PatientDetailModal({
                                 value={field.value}
                               >
                                 <FormControl>
-                                  <SelectTrigger data-testid="select-note-type">
+                                  <SelectTrigger>
                                     <SelectValue placeholder="Select note type" />
                                   </SelectTrigger>
                                 </FormControl>
@@ -842,7 +906,6 @@ export default function PatientDetailModal({
                                 <Textarea
                                   placeholder="Enter note content..."
                                   className="min-h-[120px]"
-                                  data-testid="textarea-note-content"
                                   {...field}
                                 />
                               </FormControl>
@@ -858,17 +921,16 @@ export default function PatientDetailModal({
                               createNoteMutation.isPending ||
                               updateNoteMutation.isPending
                             }
-                            data-testid="button-save-note"
                           >
                             <Save className="w-4 h-4 mr-2" />
                             {editingNoteId ? "Update Note" : "Add Note"}
                           </Button>
+
                           {editingNoteId && (
                             <Button
                               type="button"
                               variant="outline"
                               onClick={cancelEdit}
-                              data-testid="button-cancel-edit"
                             >
                               Cancel
                             </Button>
@@ -879,6 +941,81 @@ export default function PatientDetailModal({
                   </CardContent>
                 </Card>
               </div>
+            </div>
+          )}
+
+          {activeTab === "history" && user?.role === "admin" && (
+            <div className="p-6">
+              <Card className="h-full max-h-[500px] overflow-y-auto">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <History className="w-5 h-5" />
+                    Patient History (Admin)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {historyLogsLoading ? (
+                    <div className="text-center py-8">
+                      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                      <p className="text-muted-foreground">
+                        Loading history...
+                      </p>
+                    </div>
+                  ) : historyLogs.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-muted-foreground">
+                        No history events found for this patient.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {historyLogs.map((log) => (
+                        <div
+                          key={log.id}
+                          className="flex items-start gap-3 p-3 border border-border rounded-lg"
+                          data-testid={`patient-history-${log.id}`}
+                        >
+                          <div className="flex-shrink-0 w-2 h-2 mt-2 bg-primary rounded-full"></div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex sm:flex-col flex-row items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge
+                                    className={`text-xs font-medium border ${getHistoryBadgeClass(
+                                      log.eventType
+                                    )}`}
+                                  >
+                                    {log.eventType}
+                                  </Badge>
+                                  <span className="text-sm font-medium">
+                                    {getHistoryDescription(log)}
+                                  </span>
+                                </div>
+                                {log.metadata != null && (
+                                  <div className="mt-2 text-xs bg-muted p-2 rounded">
+                                    <pre className="whitespace-pre-wrap break-words">
+                                      {JSON.stringify(log.metadata, null, 2)}
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="text-xs text-muted-foreground">
+                                  {log.createdAt
+                                    ? new Date(
+                                        log.createdAt as any
+                                      ).toLocaleString()
+                                    : "N/A"}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </div>
           )}
         </div>

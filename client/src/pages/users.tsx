@@ -459,7 +459,9 @@ export default function Users() {
                   <CardHeader>
                     <CardTitle className="flex items-center space-x-2">
                       <Clock className="w-5 h-5 text-yellow-600" />
-                      <span>Pending Attorney Verifications</span>
+                      <span className="sm:text-base md:text-2xl">
+                        Pending Attorney Verifications
+                      </span>
                       <Badge variant="secondary" className="ml-2">
                         {
                           users.filter(
@@ -939,7 +941,7 @@ export default function Users() {
         open={userActionsDialogOpen}
         onOpenChange={setUserActionsDialogOpen}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[95vw] max-w-[95vw] sm:max-w-md md:max-w-4xl max-h-[95vh] overflow-auto rounded-lg p-4 sm:p-6 sm:m-0 flex flex-col">
           <DialogHeader>
             <DialogTitle>
               {selectedUserForActions &&

@@ -124,14 +124,14 @@ export default function ConsentForms() {
                     {pendingConsent.map((patient: any) => (
                       <div
                         key={patient.id}
-                        className="flex items-center justify-between p-3 border border-border rounded-lg"
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 border border-border rounded-lg"
                         data-testid={`pending-consent-${patient.id}`}
                       >
-                        <div>
-                          <h4 className="font-medium">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium truncate">
                             {patient.firstName} {patient.lastName}
                           </h4>
-                          <p className="text-sm text-muted-foreground">
+                          <p className="text-sm text-muted-foreground truncate">
                             {patient.email}
                           </p>
                           <p className="text-xs text-muted-foreground">
@@ -139,10 +139,10 @@ export default function ConsentForms() {
                             {new Date(patient.createdAt).toLocaleDateString()}
                           </p>
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-2 flex-shrink-0">
                           <StatusBadge status={patient.status} />
                           {patient.status === "consent_sent" && (
-                            <span className="text-xs text-blue-600">
+                            <span className="text-xs text-blue-600 whitespace-nowrap">
                               Sent via DocuSign
                             </span>
                           )}
@@ -179,14 +179,14 @@ export default function ConsentForms() {
                     {signedConsent.map((patient: any) => (
                       <div
                         key={patient.id}
-                        className="flex items-center justify-between p-3 border border-border rounded-lg"
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 border border-border rounded-lg"
                         data-testid={`signed-consent-${patient.id}`}
                       >
-                        <div>
-                          <h4 className="font-medium">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium truncate">
                             {patient.firstName} {patient.lastName}
                           </h4>
-                          <p className="text-sm text-muted-foreground">
+                          <p className="text-sm text-muted-foreground truncate">
                             {patient.email}
                           </p>
                           {patient.consentSignedAt && (
@@ -198,10 +198,10 @@ export default function ConsentForms() {
                             </p>
                           )}
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-2 flex-shrink-0">
                           <StatusBadge status={patient.status} />
                           {patient.status === "schedulable" && (
-                            <span className="text-xs text-purple-600">
+                            <span className="text-xs text-purple-600 whitespace-nowrap">
                               Ready to schedule
                             </span>
                           )}

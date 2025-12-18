@@ -230,6 +230,11 @@ export default function PatientNotesModal({
 
   if (!patient) return null;
 
+  // Check if case is closed and user is staff - restrict editing/adding notes
+  const isCaseClosed = patient.status === "case_closed";
+  const isStaff = user?.role === "staff";
+  const canEditNotes = !(isCaseClosed && isStaff);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -240,6 +245,11 @@ export default function PatientNotesModal({
           <DialogTitle data-testid="text-modal-title">
             Patient Notes - {patient.firstName} {patient.lastName}
           </DialogTitle>
+          {isCaseClosed && isStaff && (
+            <p className="text-sm text-muted-foreground mt-2">
+              Case is closed. You can view notes but cannot add or edit them.
+            </p>
+          )}
         </DialogHeader>
 
         <div className="flex flex-col md:flex-row gap-6">
@@ -290,7 +300,7 @@ export default function PatientNotesModal({
                             </span>
                           </div>
                           <div className="flex gap-1">
-                            {note.createdBy === user?.id && (
+                            {note.createdBy === user?.id && canEditNotes && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -338,100 +348,102 @@ export default function PatientNotesModal({
           </div>
 
           {/* Add/Edit Note Form */}
-          <div className="w-full md:w-96">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">
-                  {editingNoteId ? "Edit Note" : "Add New Note"}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Form {...form}>
-                  <form
-                    onSubmit={form.handleSubmit(onSubmit)}
-                    className="space-y-4"
-                  >
-                    <FormField
-                      control={form.control}
-                      name="noteType"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Note Type</FormLabel>
-                          <Select
-                            onValueChange={field.onChange}
-                            value={field.value}
-                          >
+          {canEditNotes && (
+            <div className="w-full md:w-96">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">
+                    {editingNoteId ? "Edit Note" : "Add New Note"}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Form {...form}>
+                    <form
+                      onSubmit={form.handleSubmit(onSubmit)}
+                      className="space-y-4"
+                    >
+                      <FormField
+                        control={form.control}
+                        name="noteType"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Note Type</FormLabel>
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value}
+                            >
+                              <FormControl>
+                                <SelectTrigger data-testid="select-note-type">
+                                  <SelectValue placeholder="Select note type" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="general">General</SelectItem>
+                                <SelectItem value="appointment">
+                                  Appointment
+                                </SelectItem>
+                                <SelectItem value="treatment">
+                                  Treatment
+                                </SelectItem>
+                                <SelectItem value="legal">Legal</SelectItem>
+                                <SelectItem value="insurance">
+                                  Insurance
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="content"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Note Content</FormLabel>
                             <FormControl>
-                              <SelectTrigger data-testid="select-note-type">
-                                <SelectValue placeholder="Select note type" />
-                              </SelectTrigger>
+                              <Textarea
+                                placeholder="Enter note content..."
+                                className="min-h-[120px]"
+                                data-testid="textarea-note-content"
+                                {...field}
+                              />
                             </FormControl>
-                            <SelectContent>
-                              <SelectItem value="general">General</SelectItem>
-                              <SelectItem value="appointment">
-                                Appointment
-                              </SelectItem>
-                              <SelectItem value="treatment">
-                                Treatment
-                              </SelectItem>
-                              <SelectItem value="legal">Legal</SelectItem>
-                              <SelectItem value="insurance">
-                                Insurance
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
 
-                    <FormField
-                      control={form.control}
-                      name="content"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Note Content</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              placeholder="Enter note content..."
-                              className="min-h-[120px]"
-                              data-testid="textarea-note-content"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="flex gap-2">
-                      <Button
-                        type="submit"
-                        disabled={
-                          createNoteMutation.isPending ||
-                          updateNoteMutation.isPending
-                        }
-                        data-testid="button-save-note"
-                      >
-                        <Save className="w-4 h-4 mr-2" />
-                        {editingNoteId ? "Update Note" : "Add Note"}
-                      </Button>
-                      {editingNoteId && (
+                      <div className="flex gap-2">
                         <Button
-                          type="button"
-                          variant="outline"
-                          onClick={cancelEdit}
-                          data-testid="button-cancel-edit"
+                          type="submit"
+                          disabled={
+                            createNoteMutation.isPending ||
+                            updateNoteMutation.isPending
+                          }
+                          data-testid="button-save-note"
                         >
-                          Cancel
+                          <Save className="w-4 h-4 mr-2" />
+                          {editingNoteId ? "Update Note" : "Add Note"}
                         </Button>
-                      )}
-                    </div>
-                  </form>
-                </Form>
-              </CardContent>
-            </Card>
-          </div>
+                        {editingNoteId && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={cancelEdit}
+                            data-testid="button-cancel-edit"
+                          >
+                            Cancel
+                          </Button>
+                        )}
+                      </div>
+                    </form>
+                  </Form>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

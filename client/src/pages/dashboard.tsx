@@ -10,10 +10,15 @@ export default function Dashboard() {
   const { isAuthenticated, isLoading } = useAuth();
 
   const { data: stats, isLoading: statsLoading } = useQuery<{
-    totalPatients: number;
-    pendingConsent: number;
-    consentSigned: number;
-    schedulable: number;
+    cards: Array<{
+      key: "totalPatients" | "pendingConsent" | "consentSigned" | "schedulable";
+      title: string;
+      value: number;
+      trendPercent: number;
+      trendUp: boolean;
+      trendLabel: string;
+      color: "emerald" | "amber" | "blue" | "purple";
+    }>;
   }>({
     queryKey: ["/api/dashboard/stats"],
     enabled: isAuthenticated,
