@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 export default function Landing() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showPendingVerification, setShowPendingVerification] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -763,7 +764,9 @@ export default function Landing() {
                       className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                       onClick={() => setFpShowNewPassword(!fpShowNewPassword)}
                       disabled={fpResetting}
-                      aria-label={fpShowNewPassword ? "Hide password" : "Show password"}
+                      aria-label={
+                        fpShowNewPassword ? "Hide password" : "Show password"
+                      }
                     >
                       {fpShowNewPassword ? (
                         <EyeOff className="h-4 w-4 text-muted-foreground" />
@@ -797,7 +800,9 @@ export default function Landing() {
                       }
                       disabled={fpResetting}
                       aria-label={
-                        fpShowConfirmPassword ? "Hide password" : "Show password"
+                        fpShowConfirmPassword
+                          ? "Hide password"
+                          : "Show password"
                       }
                     >
                       {fpShowConfirmPassword ? (
@@ -887,7 +892,7 @@ export default function Landing() {
                     data-testid="input-email"
                   />
                 </div>
-                <div className="">
+                <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <Label htmlFor="password">Password</Label>
                     <div className="flex justify-end">
@@ -907,16 +912,36 @@ export default function Landing() {
                       </Button>
                     </div>
                   </div>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    disabled={isLoading}
-                    data-testid="input-password"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showLoginPassword ? "text" : "password"}
+                      placeholder="Enter your password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      disabled={isLoading}
+                      data-testid="input-password"
+                      className="pr-10"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      disabled={isLoading}
+                      aria-label={
+                        showLoginPassword ? "Hide password" : "Show password"
+                      }
+                    >
+                      {showLoginPassword ? (
+                        <EyeOff className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <Eye className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
 
                 <Button

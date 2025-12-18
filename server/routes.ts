@@ -1824,6 +1824,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       email: true,
       phone: true,
       dateOfBirth: true,
+      dateOfInjury: true,
       address: true,
     })
     .partial();
@@ -1844,15 +1845,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Patient not found" });
       }
 
-      // HIPAA compliance: Only admin, creator, or assigned attorney can update patient
-      if (!canAccessPatient(user, existingPatient)) {
+      // Only admin and staff can update patient information
+      if (user.role !== "admin" && user.role !== "staff") {
         await auditLog(req, "update_denied", "patient", patientId, {
           role: user.role,
-          reason: "insufficient_permissions",
+          reason: "insufficient_role",
         });
-        return res
-          .status(403)
-          .json({ message: "Access denied - insufficient permissions" });
+        return res.status(403).json({
+          message: "Only admin and staff can update patient information",
+        });
       }
 
       // Only allow demographic field updates - NO status or workflow fields
@@ -2339,6 +2340,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           notes: consultationData.consultationLocation,
           createdBy: userId,
         });
+      }
+
+      // Update patient status to schedulable when appointment is scheduled
+      if (
+        patient.status === "consent_signed" ||
+        patient.status === "schedulable"
+      ) {
+        await storage.updatePatient(patient.id, { status: "schedulable" });
       }
 
       // HIPAA-safe audit log
@@ -4237,8 +4246,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const appointment = await storage.createAppointment(appointmentData);
 
-      // Update patient status to schedulable if not already
-      if (patient.status === "consent_signed") {
+      // Update patient status to schedulable when appointment is scheduled
+      if (
+        patient.status === "consent_signed" ||
+        patient.status === "schedulable"
+      ) {
         await storage.updatePatient(patient.id, { status: "schedulable" });
       }
 

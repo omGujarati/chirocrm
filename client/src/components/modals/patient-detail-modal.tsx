@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { type PatientNote, type PatientHistoryLog } from "@shared/schema";
+import EditPatientInfoModal from "./edit-patient-info-modal";
 import {
   Dialog,
   DialogContent,
@@ -78,6 +79,8 @@ export default function PatientDetailModal({
   const [selectedAssignment, setSelectedAssignment] = useState<string>("");
   const [isEditingEnvelopeId, setIsEditingEnvelopeId] = useState(false);
   const [envelopeId, setEnvelopeId] = useState<string>("");
+  const [isEditPatientInfoModalOpen, setIsEditPatientInfoModalOpen] =
+    useState(false);
 
   const form = useForm<NoteFormData>({
     resolver: zodResolver(noteSchema),
@@ -329,6 +332,9 @@ export default function PatientDetailModal({
         title: "Success",
         description: "DocuSign Envelope ID updated successfully",
       });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/patients", patient.id],
+      });
     },
     onError: (error: any) => {
       if (isUnauthorizedError(error)) {
@@ -478,14 +484,27 @@ export default function PatientDetailModal({
 
         <div className="flex-1 min-h-0 overflow-hidden">
           {activeTab === "overview" && (
-            <div className="h-full max-h-[500px] overflow-y-auto p-6">
+            <div className="h-full max-h-[calc(100vh-13rem)] overflow-y-auto p-6">
               {/* Patient Information */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card>
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <User className="w-5 h-5" />
-                      Patient Information
+                    <CardTitle className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <User className="w-5 h-5" />
+                        Patient Information
+                      </div>
+                      {(user?.role === "admin" || user?.role === "staff") && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setIsEditPatientInfoModalOpen(true)}
+                          className="h-8 px-2"
+                          data-testid="button-edit-patient-info"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </Button>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -946,7 +965,7 @@ export default function PatientDetailModal({
 
           {activeTab === "history" && user?.role === "admin" && (
             <div className="p-6">
-              <Card className="h-full max-h-[500px] overflow-y-auto">
+              <Card className="h-full max-h-[calc(100vh-13rem)] overflow-y-auto">
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <History className="w-5 h-5" />
@@ -977,7 +996,7 @@ export default function PatientDetailModal({
                         >
                           <div className="flex-shrink-0 w-2 h-2 mt-2 bg-primary rounded-full"></div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex sm:flex-col flex-row items-start justify-between gap-3">
+                            <div className="flex flex-col md:flex-row items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge
@@ -1020,6 +1039,13 @@ export default function PatientDetailModal({
           )}
         </div>
       </DialogContent>
+
+      {/* Edit Patient Info Modal */}
+      <EditPatientInfoModal
+        open={isEditPatientInfoModalOpen}
+        onOpenChange={setIsEditPatientInfoModalOpen}
+        patient={patient}
+      />
     </Dialog>
   );
 }
